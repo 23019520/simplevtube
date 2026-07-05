@@ -1,0 +1,28 @@
+[package]
+name = "simplevtube"
+version = "0.1.0"
+description = "SimpleVTube — a lightweight PNGTuber desktop app"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+cpal = "0.15"
+image = "0.25"
+tokio = { version = "1", features = ["sync"] }
+
+# `image` is used only to confirm a selected file actually decodes as a valid
+# PNG (SRS FR-001.3) — not for any rendering, which stays a plain <img> tag
+# in the Character Window per Architecture C.5.
+
+# cpal gives us cross-platform mic input (WASAPI on Windows, CoreAudio on macOS,
+# ALSA/PulseAudio on Linux) without hand-rolling per-OS audio bindings.
+
+[[bin]]
+name = "simplevtube"
+path = "src/main.rs"

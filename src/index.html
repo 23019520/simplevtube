@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SimpleVTube</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="panel">
+    <header class="panel__header">
+      <div class="panel__mark" aria-hidden="true">◐</div>
+      <div>
+        <h1 class="panel__title">SimpleVTube</h1>
+        <p class="panel__subtitle">Talk. It reacts. That's it.</p>
+      </div>
+    </header>
+
+    <section class="section" aria-labelledby="character-heading">
+      <h2 id="character-heading" class="section__label">Character</h2>
+
+      <div class="picker-row">
+        <div class="picker-preview" id="idle-preview" aria-hidden="true"></div>
+        <div class="picker-info">
+          <span class="picker-name">Idle image</span>
+          <span class="picker-path" id="idle-path">Not set</span>
+        </div>
+        <button class="btn btn--ghost" id="btn-idle" type="button">Browse</button>
+      </div>
+
+      <div class="picker-row">
+        <div class="picker-preview" id="talking-preview" aria-hidden="true"></div>
+        <div class="picker-info">
+          <span class="picker-name">Talking image</span>
+          <span class="picker-path" id="talking-path">Not set</span>
+        </div>
+        <button class="btn btn--ghost" id="btn-talking" type="button">Browse</button>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="mic-heading">
+      <h2 id="mic-heading" class="section__label">Microphone</h2>
+      <select class="select" id="mic-select" aria-label="Select microphone">
+        <option value="">Detecting microphones…</option>
+      </select>
+    </section>
+
+    <section class="section" aria-labelledby="sensitivity-heading">
+      <div class="section__label-row">
+        <h2 id="sensitivity-heading" class="section__label">Sensitivity</h2>
+        <span class="section__value" id="sensitivity-value">35</span>
+      </div>
+      <input class="slider" type="range" min="0" max="100" value="35" id="sensitivity-slider"
+             aria-label="Voice sensitivity threshold" />
+      <div class="vu-meter" id="vu-meter" aria-hidden="true"></div>
+    </section>
+
+    <section class="section section--actions">
+      <button class="btn btn--primary" id="btn-launch" type="button">Launch character</button>
+      <button class="btn btn--ghost" id="btn-hide" type="button">Hide character</button>
+      <label class="toggle">
+        <input type="checkbox" id="always-on-top" checked />
+        <span>Keep character on top</span>
+      </label>
+    </section>
+
+    <footer class="status" id="status" role="status">
+      <span class="status__dot" id="status-dot"></span>
+      <span id="status-text">Starting up…</span>
+    </footer>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>

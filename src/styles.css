@@ -1,0 +1,279 @@
+/* SimpleVTube — Control Window
+   Design direction: a small hardware-style control panel, not a generic
+   settings form. Signature element: the sensitivity slider paired with a
+   live VU-style meter showing your actual mic level against the threshold —
+   so "sensitivity" is something you watch react, not just a number you set.
+*/
+
+:root {
+  --bg: #14151c;
+  --panel: #1b1d27;
+  --panel-raised: #23252f;
+  --line: #2e303c;
+  --text: #e9e9ee;
+  --text-dim: #9496a3;
+  --accent: #ff7a59;      /* warm coral — reads as "live/on-air" without going neon */
+  --accent-dim: #6b3b30;
+  --ok: #5fd692;
+  --danger: #ff5f6d;
+  --radius: 10px;
+  --font-display: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-display);
+  -webkit-font-smoothing: antialiased;
+}
+
+.panel {
+  padding: 20px 22px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 100vh;
+}
+
+.panel__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.panel__mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dim));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.panel__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.panel__subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.section__label {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.section__label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.section__value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.picker-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.picker-row + .picker-row {
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  padding-top: 12px;
+}
+
+.picker-preview {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--panel-raised);
+  border: 1px dashed var(--line);
+  flex-shrink: 0;
+  background-size: cover;
+  background-position: center;
+}
+
+.picker-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.picker-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.picker-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.select {
+  width: 100%;
+  padding: 9px 10px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 13px;
+}
+
+.slider {
+  width: 100%;
+  accent-color: var(--accent);
+  margin-bottom: 10px;
+}
+
+.vu-meter {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 40px;
+  padding: 4px 2px 0;
+}
+
+.vu-tile {
+  flex: 1;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--panel-raised);
+  position: relative;
+  overflow: hidden;
+  transition: background-color 40ms linear;
+}
+
+.vu-tile__fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 0%;
+  background: var(--tile-off, transparent);
+  transition: height 40ms linear;
+}
+
+.vu-tile.is-lit .vu-tile__fill {
+  height: 100%;
+}
+
+/* Color ramps from calm green through to hot coral as level rises,
+   independent of the threshold marker below. */
+.vu-tile[data-band="low"].is-lit .vu-tile__fill { background: var(--ok); }
+.vu-tile[data-band="mid"].is-lit .vu-tile__fill { background: #f2c94c; }
+.vu-tile[data-band="high"].is-lit .vu-tile__fill { background: var(--accent); }
+
+.vu-tile.is-threshold::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--text);
+  opacity: 0.85;
+}
+
+.section--actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.btn {
+  border: none;
+  border-radius: 7px;
+  padding: 11px 14px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 80ms ease, opacity 80ms ease;
+}
+
+.btn:active { transform: scale(0.98); }
+
+.btn--primary {
+  background: var(--accent);
+  color: #1a1210;
+}
+
+.btn--ghost {
+  background: var(--panel-raised);
+  color: var(--text);
+  border: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.status {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  padding-top: 4px;
+}
+
+.status__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.status--listening .status__dot { background: var(--ok); }
+.status--error .status__dot { background: var(--danger); }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vu-tile__fill { transition: none; }
+}
