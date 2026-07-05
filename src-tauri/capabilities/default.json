@@ -1,0 +1,9 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for SimpleVTube — allows both windows to listen for backend events (settings-updated, state-changed, volume-level, device-error) as required by the event-bus architecture in the SRS/Architecture doc, Part C.",
+  "windows": ["control", "character"],
+  "permissions": [
+    "core:default",
+    "core:event:default"
+  ]
+}
