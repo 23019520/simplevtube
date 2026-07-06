@@ -18,6 +18,15 @@
       -webkit-user-select: none;
       user-select: none;
       pointer-events: none;
+      /* v1.2: all character-effect values are set as CSS custom properties
+         from render.js based on settings-updated, and combined here into a
+         single transform/filter. Kept in one place so the "how it looks"
+         logic stays declarative rather than scattered across JS. */
+      --flip: 1;
+      --rotate: 0deg;
+      opacity: var(--opacity, 1);
+      transform: scaleX(var(--flip)) rotate(var(--rotate));
+      filter: var(--effect-filter, none);
     }
   </style>
 </head>

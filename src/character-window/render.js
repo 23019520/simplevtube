@@ -1,10 +1,9 @@
 // render.js — Character Window.
 //
 // Deliberately dumb, per Architecture doc C.5: this file makes zero
-// decisions. It listens for two events and swaps an <img src>. All VAD
-// logic lives in audio_engine.rs. If the character ever shows the wrong
-// sprite, the bug is here (a rendering bug) — never a logic bug, because
-// there is no logic here to have a bug in.
+// decisions about WHEN to swap or WHAT the effects should be — it only
+// applies whatever settings.characterWindow says. All VAD logic lives in
+// audio_engine.rs; all effect toggling lives in the Control Window's UI.
 //
 // Uses window.__TAURI__ global (no bundler in this project — see main.js).
 
@@ -17,7 +16,6 @@ let idlePath = null;
 let talkingPath = null;
 
 function toAssetUrl(path) {
-  // eslint-disable-next-line no-undef
   return window.__TAURI__.core.convertFileSrc(path);
 }
 
@@ -25,6 +23,34 @@ function applySettings(settings) {
   idlePath = settings.idleImagePath ? toAssetUrl(settings.idleImagePath) : null;
   talkingPath = settings.talkingImagePath ? toAssetUrl(settings.talkingImagePath) : null;
   if (idlePath) sprite.src = idlePath;
+
+  const cw = settings.characterWindow;
+
+  // Opacity + flip + rotation are plain CSS custom properties (see the
+  // combined transform/opacity/filter rule in index.html).
+  sprite.style.setProperty("--opacity", cw.opacity);
+  sprite.style.setProperty("--flip", cw.flipped ? "-1" : "1");
+  sprite.style.setProperty("--rotate", `${cw.rotationDeg}deg`);
+
+  // Shadow and outline both use CSS filter: drop-shadow, which (unlike
+  // box-shadow) follows the PNG's actual alpha silhouette instead of
+  // drawing a rectangle. An "outline" is faked by stacking four
+  // zero-blur drop-shadows in each direction — a common CSS trick for a
+  // solid-color silhouette outline with no dedicated outline-follows-alpha
+  // property available.
+  const filters = [];
+  if (cw.outlineEnabled) {
+    filters.push(
+      "drop-shadow(1.5px 0 0 white)",
+      "drop-shadow(-1.5px 0 0 white)",
+      "drop-shadow(0 1.5px 0 white)",
+      "drop-shadow(0 -1.5px 0 white)"
+    );
+  }
+  if (cw.shadowEnabled) {
+    filters.push("drop-shadow(0 6px 10px rgba(0,0,0,0.55))");
+  }
+  sprite.style.setProperty("--effect-filter", filters.length ? filters.join(" ") : "none");
 }
 
 listen("settings-updated", (event) => applySettings(event.payload));

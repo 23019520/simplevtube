@@ -36,6 +36,8 @@ impl WindowManager {
             let _ = win.set_position(LogicalPosition::new(saved.x, saved.y));
             let _ = win.set_size(LogicalSize::new(saved.width, saved.height));
             let _ = win.set_always_on_top(saved.always_on_top);
+            let _ = win.set_resizable(!saved.locked);
+            let _ = win.set_ignore_cursor_events(saved.click_through);
             self.attach_geometry_listeners();
         }
     }
@@ -100,5 +102,51 @@ impl WindowManager {
 
     pub fn current_state(&self) -> CharacterWindowState {
         self.settings.get().character_window
+    }
+
+    // --- v1.2 additions (Phase 1 of the v2 roadmap) ---
+
+    /// Mouse clicks pass through the Character Window entirely when true.
+    /// Uses Tauri's set_ignore_cursor_events, a long-standing stable API
+    /// (unlike window opacity, which has no reliable cross-platform
+    /// equivalent — see events.rs's CharacterWindowState.opacity doc).
+    pub fn set_click_through(&self, value: bool) -> Result<(), String> {
+        let win = self
+            .character_window()
+            .ok_or("Character window not found")?;
+        win.set_ignore_cursor_events(value).map_err(|e| e.to_string())?;
+        self.settings.update(|s| s.character_window.click_through = value);
+        Ok(())
+    }
+
+    /// Disables OS-level resizing when locked. (Moving an already-borderless
+    /// window isn't separately controllable via a stable Tauri API, so
+    /// "lock" scopes to resize, which is the primary accidental-change risk
+    /// during a live stream.)
+    pub fn set_locked(&self, value: bool) -> Result<(), String> {
+        let win = self
+            .character_window()
+            .ok_or("Character window not found")?;
+        win.set_resizable(!value).map_err(|e| e.to_string())?;
+        self.settings.update(|s| s.character_window.locked = value);
+        Ok(())
+    }
+
+    /// Grows or shrinks the Character Window by a fixed step, for the
+    /// "character scaling hotkeys" feature. Reuses the exact same
+    /// set_size() path as manual corner-drag resize, so the existing
+    /// geometry-persistence listener (attach_geometry_listeners) picks up
+    /// and saves the new size automatically — no separate persistence
+    /// logic needed here.
+    pub fn nudge_size(&self, grow: bool) -> Result<(), String> {
+        let win = self
+            .character_window()
+            .ok_or("Character window not found")?;
+        let current = self.settings.get().character_window;
+        let factor: f64 = if grow { 1.08 } else { 1.0 / 1.08 };
+        let new_width = (current.width * factor).clamp(80.0, 2400.0);
+        let new_height = (current.height * factor).clamp(80.0, 2400.0);
+        win.set_size(LogicalSize::new(new_width, new_height))
+            .map_err(|e| e.to_string())
     }
 }

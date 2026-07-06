@@ -86,10 +86,35 @@ body {
   color: var(--text-dim);
 }
 
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.btn-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .section__label-row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  gap: 10px;
+}
+
+.section__label-group {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
 }
 
 .section__value {
@@ -166,6 +191,22 @@ body {
   gap: 3px;
   height: 40px;
   padding: 4px 2px 0;
+}
+
+.vu-meter-wrap {
+  position: relative;
+}
+
+.vu-peak-marker {
+  position: absolute;
+  top: 4px;
+  bottom: 0;
+  width: 2px;
+  background: #fff;
+  opacity: 0.85;
+  left: 0%;
+  pointer-events: none;
+  transition: left 60ms linear;
 }
 
 .vu-tile {
@@ -268,6 +309,96 @@ body {
 
 .status--listening .status__dot { background: var(--ok); }
 .status--error .status__dot { background: var(--danger); }
+
+/* --- v1.2 additions --- */
+
+.profile-row {
+  display: flex;
+  gap: 8px;
+}
+
+.profile-row .select {
+  flex: 1;
+}
+
+.btn--icon {
+  flex-shrink: 0;
+  padding: 9px 12px;
+}
+
+.hint {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+kbd {
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.section--advanced {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.section--advanced summary {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  cursor: pointer;
+  list-style: none;
+}
+
+.section--advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.section--advanced summary::before {
+  content: "▸ ";
+  display: inline-block;
+  transition: transform 100ms ease;
+}
+
+.section--advanced[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.section--advanced[open] summary {
+  margin-bottom: 14px;
+}
+
+.field {
+  margin-bottom: 14px;
+}
+
+.field:last-of-type {
+  margin-bottom: 10px;
+}
+
+.field__label {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.section--advanced .toggle {
+  margin-bottom: 8px;
+}
+
+/* Drag-and-drop visual affordance (Phase 1: drag-and-drop image loading) */
+body.drag-over .picker-row {
+  outline: 1.5px dashed var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
 
 :focus-visible {
   outline: 2px solid var(--accent);

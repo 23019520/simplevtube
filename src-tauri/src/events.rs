@@ -40,11 +40,19 @@ pub enum DeviceErrorReason {
 
 /// Emitted whenever settings are loaded or changed, so the Control Window UI
 /// can (re)sync itself to the single source of truth in settings_manager.
+/// This reflects the ACTIVE profile's settings only — see ProfilesUpdatedEvent
+/// for the list of all profiles.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsUpdatedEvent {
     pub microphone_device_id: Option<String>,
     pub sensitivity_threshold: u8,
+    /// v1.2: volume readings below this (0-100 scale) are treated as silence,
+    /// filtering out constant background hiss/hum before it ever reaches the
+    /// sensitivity comparison.
+    pub noise_gate_threshold: u8,
+    /// v1.2: was a hardcoded 200ms constant; now user-adjustable.
+    pub mouth_hold_time_ms: u32,
     pub idle_image_path: Option<String>,
     pub talking_image_path: Option<String>,
     pub character_window: CharacterWindowState,
@@ -59,6 +67,22 @@ pub struct CharacterWindowState {
     pub width: f64,
     pub height: f64,
     pub always_on_top: bool,
+    // --- v1.2 character effects (Phase 1/2 of the v2 roadmap) ---
+    /// 0.0 (invisible) to 1.0 (fully opaque). Applied as CSS opacity on the
+    /// sprite itself, NOT as OS window transparency — Tauri has no reliable
+    /// cross-platform window-opacity API, and Windows specifically ignores
+    /// alpha in the one background-color API that comes close.
+    pub opacity: f32,
+    /// When true, resizing is disabled at the OS window level.
+    pub locked: bool,
+    /// When true, mouse clicks pass through the Character Window entirely.
+    pub click_through: bool,
+    /// Mirrors the sprite horizontally (CSS transform, no new assets needed).
+    pub flipped: bool,
+    /// Degrees, -180 to 180.
+    pub rotation_deg: f32,
+    pub shadow_enabled: bool,
+    pub outline_enabled: bool,
 }
 
 impl Default for CharacterWindowState {
@@ -69,6 +93,13 @@ impl Default for CharacterWindowState {
             width: 400.0,
             height: 400.0,
             always_on_top: true,
+            opacity: 1.0,
+            locked: false,
+            click_through: false,
+            flipped: false,
+            rotation_deg: 0.0,
+            shadow_enabled: false,
+            outline_enabled: false,
         }
     }
 }
@@ -82,7 +113,19 @@ pub struct VolumeLevelEvent {
     pub level: f32, // 0.0 - 100.0
 }
 
+/// v1.2: emitted whenever the list of profiles or the active one changes,
+/// so the Control Window can populate/refresh the profile dropdown. Kept
+/// separate from SettingsUpdatedEvent since that event only ever describes
+/// the currently-active profile's settings, not the full list of profiles.
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfilesUpdatedEvent {
+    pub profiles: Vec<String>,
+    pub active_profile: String,
+}
+
 pub const EVT_VOLUME_LEVEL: &str = "volume-level";
+pub const EVT_PROFILES_UPDATED: &str = "profiles-updated";
 
 // Event name constants — used on both the emit side (Rust) and the
 // listen side (JS) so a typo can't silently create two different channels.

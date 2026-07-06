@@ -37,12 +37,14 @@ fn main() {
             settings.validate_image_paths(); // FR-006.3: drop stale image paths
 
             // Step 4: start audio engine on the persisted device (or default).
+            let initial_settings = settings.get();
             let audio = Arc::new(AudioEngine::new(
                 app_handle.clone(),
-                settings.get().sensitivity_threshold,
+                initial_settings.sensitivity_threshold,
+                initial_settings.noise_gate_threshold,
+                initial_settings.mouth_hold_time_ms,
             ));
-            let mic_id = settings.get().microphone_device_id;
-            audio.start(mic_id);
+            audio.start(initial_settings.microphone_device_id.clone());
 
             // Step 5: restore Character Window geometry.
             let windows = Arc::new(WindowManager::new(app_handle.clone(), settings.clone()));
@@ -63,12 +65,27 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::select_idle_image,
             commands::select_talking_image,
+            commands::set_image_from_dropped_path,
             commands::list_microphones,
             commands::set_microphone,
             commands::set_sensitivity,
+            commands::set_noise_gate,
+            commands::set_hold_time,
             commands::launch_character,
             commands::hide_character,
             commands::set_always_on_top,
+            commands::set_character_opacity,
+            commands::set_locked,
+            commands::set_click_through,
+            commands::set_flipped,
+            commands::nudge_character_size,
+            commands::set_rotation,
+            commands::set_shadow_enabled,
+            commands::set_outline_enabled,
+            commands::list_profiles,
+            commands::create_profile,
+            commands::switch_profile,
+            commands::delete_profile,
             commands::get_settings,
         ])
         .run(tauri::generate_context!())
