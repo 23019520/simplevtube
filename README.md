@@ -4,7 +4,19 @@ A lightweight PNGTuber desktop app. Talk into your mic, your idle sprite swaps t
 
 This is v1.2, built from the SRS + Architecture design doc (`docs/SimpleVTube_SRS_Architecture.md`) plus Phases 1, 2, and 4 of the v2 roadmap (`docs/v2-roadmap.md`).
 
-## What's new in v1.2
+## What's new in v1.5
+- **System-wide global hotkeys** — Ctrl+=/Ctrl+-/Ctrl+Arrow (resize/move the character) and Alt+1 through Alt+9 (fire emotes) now work anywhere on your PC, even while a game, OBS, or any other app has focus. Previously these only worked while the Control Window itself was focused.
+- **Honest tradeoff to know about:** these are genuinely global — Ctrl+= and Ctrl+Arrow are common shortcuts in browsers and some other apps (zoom, text navigation). While SimpleVTube is running, it takes over those combos system-wide. There's no per-shortcut disable in this version; if one conflicts with something you use elsewhere, that's the current cost of it working outside the app at all.
+
+- **Crop/position editor** — every image you add (avatar frames or emote frames) now opens in a built-in editor first: drag to position, scroll or use the slider to zoom, with a grid overlay for alignment reference. Every exported frame is saved at the exact same 512×512 dimensions, guaranteeing perfectly aligned cycling between frames regardless of what size or aspect ratio your original images were.
+- **Click any existing thumbnail to re-crop it** — no need to remove and re-add if you want to nudge the positioning later.
+- Your original image files are never modified — edited frames are saved as new files in the app's own data folder, so cropping is fully non-destructive.
+
+- **Pop-up emotes** — separate from the avatar entirely, shown centered on screen. Add as many emotes as you want, each with its own image frames, duration, and an optional Alt+digit hotkey. Trigger with the "Test" button or the hotkey.
+- **Multi-frame avatar states** — idle and talking can each cycle through multiple images now (e.g. blinking, alternating mouth shapes), not just one static picture each. Add frames the same way as before (Browse or drag-and-drop); a single frame behaves exactly like before.
+- **Draggable character** — click and drag the character directly, or use Ctrl+Arrow keys to nudge it. Both respect "Lock position & size."
+- **Fixed the transparent-frame artifact** — Windows was adding a faint border to the borderless character window; disabled.
+
 - **Noise gate, adjustable mouth hold time, and always-on audio smoothing** — tune out background noise and chatter without editing code
 - **Auto-calibrate** — sets your sensitivity threshold automatically from a few seconds of quiet + a few seconds of normal talking
 - **Peak-hold VU meter** — see your loudest recent moment, not just the current instant

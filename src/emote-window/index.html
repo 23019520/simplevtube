@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      overflow: hidden;
+      width: 100%;
+      height: 100%;
+    }
+    #emote-sprite {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      -webkit-user-select: none;
+      user-select: none;
+      pointer-events: none;
+      /* Hidden by default. Playback toggles opacity only — the window
+         itself stays mapped/visible permanently (see tauri.conf.json and
+         window_manager.rs's setup_emote_window doc comment) to avoid the
+         show()/hide() timing races we hit earlier with the Character
+         Window. A pure CSS toggle has no such race. */
+      opacity: 0;
+      transition: opacity 80ms ease;
+    }
+    #emote-sprite.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <img id="emote-sprite" src="" alt="" draggable="false" />
+  <script src="render.js"></script>
+</body>
+</html>

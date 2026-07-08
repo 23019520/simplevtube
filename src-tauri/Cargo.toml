@@ -10,11 +10,18 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 cpal = "0.15"
 image = "0.25"
 tokio = { version = "1", features = ["sync"] }
+base64 = "0.22"
+
+# base64 decodes the cropped/positioned PNG data the frontend's canvas-based
+# image editor exports (see save_processed_frame in commands.rs) — all
+# actual cropping/positioning math happens in JS via Canvas; Rust's only
+# job is writing the already-final bytes to disk.
 
 # `image` is used only to confirm a selected file actually decodes as a valid
 # PNG (SRS FR-001.3) — not for any rendering, which stays a plain <img> tag

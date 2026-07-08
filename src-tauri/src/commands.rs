@@ -11,13 +11,16 @@
 //   - Phase 4 (profiles): list/create/switch/delete
 
 use crate::audio_engine::AudioEngine;
-use crate::events::{ProfilesUpdatedEvent, SettingsUpdatedEvent, EVT_PROFILES_UPDATED, EVT_SETTINGS_UPDATED};
+use crate::events::{
+    Emote, EmoteTriggeredEvent, ProfilesUpdatedEvent, SettingsUpdatedEvent, EVT_EMOTE_TRIGGERED,
+    EVT_PROFILES_UPDATED, EVT_SETTINGS_UPDATED,
+};
 use crate::settings_manager::SettingsManager;
 use crate::window_manager::WindowManager;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 pub struct AppState {
@@ -49,51 +52,15 @@ pub fn broadcast_initial_settings(app: &AppHandle, settings: &SettingsManager) {
     broadcast_profiles(app, settings);
 }
 
-/// Shared validation+persistence logic for setting an idle/talking image,
-/// used by BOTH the file-dialog flow (select_idle_image/select_talking_image)
-/// and the drag-and-drop flow (set_image_from_dropped_path) — one place
-/// that decides "is this a valid image" and "how do we store it".
-fn validate_and_store_image(
-    app: &AppHandle,
-    state: &State<'_, AppState>,
-    path: PathBuf,
-    is_idle: bool,
-) -> Result<String, String> {
-    if image::open(&path).is_err() {
-        return Err("Unsupported image format.".to_string());
-    }
-    let path_str = path.to_string_lossy().to_string();
-    state.settings.update(|s| {
-        if is_idle {
-            s.idle_image_path = Some(path_str.clone());
-        } else {
-            s.talking_image_path = Some(path_str.clone());
-        }
-    });
-    broadcast_settings(app, &state.settings);
-    Ok(path_str)
-}
-
-/// FR-001: opens a native file picker restricted to PNG, validates it
-/// decodes, and persists the path. Returns the chosen path (or an error
-/// message matching the Error Handling table in SRS A.4).
+/// v1.4: opens a native file picker restricted to PNG and validates it
+/// decodes, but does NOT store it anywhere. The frontend's crop/position
+/// editor (see main.js) opens on the returned raw path; only the EDITED
+/// result (via save_processed_frame below) ever becomes an actual frame.
+/// This one command replaces what used to be three separate dialog
+/// implementations (idle, talking, emote) — the picking step is identical
+/// regardless of what the picked image is eventually used for.
 #[tauri::command]
-pub async fn select_idle_image(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    select_image(&app, &state, true).await
-}
-
-#[tauri::command]
-pub async fn select_talking_image(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    select_image(&app, &state, false).await
-}
-
-async fn select_image(app: &AppHandle, state: &State<'_, AppState>, is_idle: bool) -> Result<String, String> {
-    // IMPORTANT FIX: blocking_pick_file() blocks the calling thread while
-    // waiting for the user to interact with the native dialog. Inside an
-    // `async` command, that stalls Tauri's async runtime instead of
-    // yielding properly, so the result never reliably makes it back to the
-    // frontend's invoke() promise. The non-blocking pick_file() + oneshot
-    // channel below awaits correctly without blocking any thread.
+pub async fn pick_image_file(app: AppHandle) -> Result<String, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
 
     app.dialog()
@@ -104,28 +71,131 @@ async fn select_image(app: &AppHandle, state: &State<'_, AppState>, is_idle: boo
         });
 
     let file = rx.await.map_err(|_| "Dialog was closed unexpectedly.".to_string())?;
-
     let path = match file {
         Some(p) => p.into_path().map_err(|_| "Unsupported image format.".to_string())?,
         None => return Err("No file selected.".to_string()),
     };
-
-    validate_and_store_image(app, state, path, is_idle)
+    if image::open(&path).is_err() {
+        return Err("Unsupported image format.".to_string());
+    }
+    Ok(path.to_string_lossy().to_string())
 }
 
-/// v1.2 Phase 1: drag-and-drop image loading. The frontend already knows
-/// the absolute path (from Tauri's native onDragDropEvent, which hands over
-/// real filesystem paths — unlike a browser drop, which only gives opaque
-/// File blobs) so this skips the dialog entirely and reuses the same
-/// validate_and_store_image() path as the Browse buttons.
+/// v1.4: validates a path handed over directly (e.g. from drag-and-drop,
+/// which already has the absolute path via Tauri's native drag-drop bridge
+/// and doesn't need a dialog) before it's opened in the crop editor.
 #[tauri::command]
-pub fn set_image_from_dropped_path(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    path: String,
-    is_idle: bool,
-) -> Result<String, String> {
-    validate_and_store_image(&app, &state, PathBuf::from(path), is_idle)
+pub fn validate_image_path(path: String) -> Result<String, String> {
+    let path_buf = PathBuf::from(&path);
+    if image::open(&path_buf).is_err() {
+        return Err("Unsupported image format.".to_string());
+    }
+    Ok(path)
+}
+
+/// v1.4 FIX: the crop editor needs pixel-level canvas access (toDataURL)
+/// to export the cropped result, but images loaded via convertFileSrc's
+/// asset:// protocol taint the canvas — the webview doesn't send
+/// permissive CORS headers for that custom protocol, so the browser
+/// treats it as cross-origin and blocks reading pixel data back out.
+/// data: URLs are always same-origin/never taint a canvas, so the editor
+/// loads images through this command instead of convertFileSrc.
+#[tauri::command]
+pub fn read_image_as_data_url(path: String) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = std::fs::read(&path).map_err(|e| format!("Could not read image: {e}"))?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:image/png;base64,{encoded}"))
+}
+
+/// v1.4: saves the crop editor's exported PNG (base64-encoded canvas data,
+/// already cropped/positioned/resized to the standard frame dimensions in
+/// the frontend) to a dedicated frames folder in app data. All actual
+/// image manipulation happens in JS via Canvas — this command's only job
+/// is decoding the base64 payload and writing bytes to disk, so there's no
+/// duplicate cropping/scaling logic to keep in sync between Rust and JS.
+#[tauri::command]
+pub fn save_processed_frame(app: AppHandle, base64_png: String) -> Result<String, String> {
+    use base64::Engine;
+
+    // Frontend sends a raw base64 payload (prefix already stripped in JS),
+    // but strip defensively in case a data: URL slips through.
+    let raw = base64_png
+        .split(',')
+        .last()
+        .unwrap_or(&base64_png);
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(raw)
+        .map_err(|e| format!("Could not decode edited image: {e}"))?;
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Could not resolve app data directory: {e}"))?;
+    let frames_dir = app_data_dir.join("frames");
+    std::fs::create_dir_all(&frames_dir).map_err(|e| format!("Could not create frames folder: {e}"))?;
+
+    let filename = format!(
+        "frame_{}.png",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let out_path = frames_dir.join(filename);
+    std::fs::write(&out_path, bytes).map_err(|e| format!("Could not save edited image: {e}"))?;
+
+    Ok(out_path.to_string_lossy().to_string())
+}
+
+/// v1.3/v1.4: appends an already-picked-and-edited frame path. No dialog,
+/// no validation — the crop editor guarantees the exported PNG is valid
+/// and correctly sized, so this command is intentionally trivial.
+#[tauri::command]
+pub fn append_idle_frame(app: AppHandle, state: State<'_, AppState>, path: String) {
+    state.settings.add_idle_frame(path);
+    broadcast_settings(&app, &state.settings);
+}
+
+#[tauri::command]
+pub fn append_talking_frame(app: AppHandle, state: State<'_, AppState>, path: String) {
+    state.settings.add_talking_frame(path);
+    broadcast_settings(&app, &state.settings);
+}
+
+/// v1.4: replaces a frame in place at a given index — used when re-editing
+/// an existing thumbnail's crop/position rather than adding a new one.
+#[tauri::command]
+pub fn replace_idle_frame(app: AppHandle, state: State<'_, AppState>, index: usize, path: String) {
+    state.settings.replace_idle_frame(index, path);
+    broadcast_settings(&app, &state.settings);
+}
+
+#[tauri::command]
+pub fn replace_talking_frame(app: AppHandle, state: State<'_, AppState>, index: usize, path: String) {
+    state.settings.replace_talking_frame(index, path);
+    broadcast_settings(&app, &state.settings);
+}
+
+/// v1.3: removes one frame from the idle/talking frame list by index.
+#[tauri::command]
+pub fn remove_idle_frame(app: AppHandle, state: State<'_, AppState>, index: usize) {
+    state.settings.remove_idle_frame(index);
+    broadcast_settings(&app, &state.settings);
+}
+
+#[tauri::command]
+pub fn remove_talking_frame(app: AppHandle, state: State<'_, AppState>, index: usize) {
+    state.settings.remove_talking_frame(index);
+    broadcast_settings(&app, &state.settings);
+}
+
+/// v1.3: shared cycle speed for both idle_frames and talking_frames.
+#[tauri::command]
+pub fn set_frame_interval(app: AppHandle, state: State<'_, AppState>, value: u32) {
+    state.settings.set_frame_interval(value);
+    broadcast_settings(&app, &state.settings);
 }
 
 /// FR-002: enumerates input devices for the Control Window dropdown.
@@ -232,6 +302,14 @@ pub fn nudge_character_size(state: State<'_, AppState>, grow: bool) -> Result<()
     state.windows.nudge_size(grow)
 }
 
+/// Keyboard-driven alternative to dragging: Ctrl+Arrow keys move the
+/// character by a fixed step. Geometry persistence happens automatically
+/// via the existing move-event listener in window_manager.rs.
+#[tauri::command]
+pub fn nudge_character_position(state: State<'_, AppState>, dx: f64, dy: f64) -> Result<(), String> {
+    state.windows.nudge_position(dx, dy)
+}
+
 // --- v1.2 Phase 2: character presentation ---
 
 #[tauri::command]
@@ -306,6 +384,144 @@ fn apply_active_profile_audio(state: &State<'_, AppState>) {
     state.audio.set_threshold(settings.sensitivity_threshold);
     state.audio.set_noise_gate(settings.noise_gate_threshold);
     state.audio.set_hold_time_ms(settings.mouth_hold_time_ms);
+}
+
+// --- v1.3: pop-up emotes ---
+
+/// Creates a blank emote (default name, no frames, 1500ms duration) and
+/// returns it so the frontend can immediately render its card. Also
+/// broadcasts the updated settings so every window's emote list stays synced.
+#[tauri::command]
+pub fn add_emote(app: AppHandle, state: State<'_, AppState>) -> Emote {
+    let emote = state.settings.add_emote();
+    broadcast_settings(&app, &state.settings);
+    emote
+}
+
+#[tauri::command]
+pub fn delete_emote(app: AppHandle, state: State<'_, AppState>, id: String) {
+    state.settings.delete_emote(&id);
+    broadcast_settings(&app, &state.settings);
+}
+
+#[tauri::command]
+pub fn rename_emote(app: AppHandle, state: State<'_, AppState>, id: String, name: String) {
+    let trimmed = name.trim().to_string();
+    if trimmed.is_empty() {
+        return;
+    }
+    state.settings.rename_emote(&id, trimmed);
+    broadcast_settings(&app, &state.settings);
+}
+
+#[tauri::command]
+pub fn set_emote_duration(app: AppHandle, state: State<'_, AppState>, id: String, duration_ms: u32) {
+    state.settings.set_emote_duration(&id, duration_ms.clamp(200, 10_000));
+    broadcast_settings(&app, &state.settings);
+}
+
+/// hotkey_digit of 0 (or omitted) clears the hotkey — Option<u8> doesn't
+/// round-trip cleanly through every JS falsy-check path, so the frontend
+/// sends None explicitly when clearing.
+#[tauri::command]
+pub fn set_emote_hotkey(app: AppHandle, state: State<'_, AppState>, id: String, hotkey_digit: Option<u8>) {
+    state.settings.set_emote_hotkey(&id, hotkey_digit);
+    broadcast_settings(&app, &state.settings);
+}
+
+/// v1.3/v1.4: appends an already-picked-and-edited frame to a specific
+/// emote. No dialog, no validation — same reasoning as append_idle_frame.
+#[tauri::command]
+pub fn append_emote_frame(app: AppHandle, state: State<'_, AppState>, id: String, path: String) {
+    state.settings.add_emote_frame(&id, path);
+    broadcast_settings(&app, &state.settings);
+}
+
+/// v1.4: replaces an emote frame in place (re-editing an existing thumbnail).
+#[tauri::command]
+pub fn replace_emote_frame(app: AppHandle, state: State<'_, AppState>, id: String, index: usize, path: String) {
+    state.settings.replace_emote_frame(&id, index, path);
+    broadcast_settings(&app, &state.settings);
+}
+
+#[tauri::command]
+pub fn remove_emote_frame(app: AppHandle, state: State<'_, AppState>, id: String, index: usize) {
+    state.settings.remove_emote_frame(&id, index);
+    broadcast_settings(&app, &state.settings);
+}
+
+/// Shared logic: given an already-looked-up Emote, fires it. Used by both
+/// the JS-invoked trigger_emote command (by id) and the global-hotkey path
+/// (by assigned digit) in main.rs — one place decides "what does firing an
+/// emote actually do."
+fn fire_emote(app: &AppHandle, emote: &Emote) -> Result<(), String> {
+    if emote.frame_paths.is_empty() {
+        return Err("This emote has no images yet.".to_string());
+    }
+    let _ = app.emit(
+        EVT_EMOTE_TRIGGERED,
+        EmoteTriggeredEvent {
+            frame_paths: emote.frame_paths.clone(),
+            duration_ms: emote.duration_ms,
+        },
+    );
+    Ok(())
+}
+
+/// Fires the emote. The Emote Window owns all playback timing itself once
+/// it receives this event — this command's only job is "look up the emote,
+/// hand its frames + duration to the event bus." No frame-cycling logic
+/// lives here (see events.rs's EmoteTriggeredEvent doc comment).
+#[tauri::command]
+pub fn trigger_emote(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let emote = state
+        .settings
+        .find_emote(&id)
+        .ok_or("That emote no longer exists.".to_string())?;
+    fire_emote(&app, &emote)
+}
+
+/// v1.5: global hotkey path (Alt+digit) — NOT a #[tauri::command], since
+/// nothing in JS calls this directly. Called from the global-shortcut
+/// handler registered in main.rs, which fires system-wide (even while
+/// another app has focus) rather than only while the Control Window does.
+pub fn trigger_emote_by_hotkey(app: &AppHandle, digit: u8) {
+    if let Some(state) = app.try_state::<AppState>() {
+        let emote = state
+            .settings
+            .get()
+            .emotes
+            .into_iter()
+            .find(|e| e.hotkey_digit == Some(digit));
+        if let Some(emote) = emote {
+            let _ = fire_emote(app, &emote);
+        }
+    }
+}
+
+/// v1.5: global hotkey path for character resize (Ctrl+=/Ctrl+-).
+pub fn nudge_size_via_hotkey(app: &AppHandle, grow: bool) {
+    if let Some(state) = app.try_state::<AppState>() {
+        let _ = state.windows.nudge_size(grow);
+    }
+}
+
+/// v1.5: global hotkey path for character movement (Ctrl+Arrow keys).
+pub fn nudge_position_via_hotkey(app: &AppHandle, dx: f64, dy: f64) {
+    if let Some(state) = app.try_state::<AppState>() {
+        let _ = state.windows.nudge_position(dx, dy);
+    }
+}
+
+/// v1.4 FIX: re-applies centering + click-through for the Emote Window.
+/// The one-time call during Rust's setup() can race with the window
+/// actually being fully realized by the OS (same class of timing issue as
+/// the app-state race fixed in main.rs) — calling this from the Emote
+/// Window's own JS on load guarantees the window definitely exists by
+/// then, since its script couldn't be running otherwise.
+#[tauri::command]
+pub fn finalize_emote_window(state: State<'_, AppState>) {
+    state.windows.setup_emote_window();
 }
 
 /// Returns the full current settings snapshot — used by src/main.js on

@@ -28,7 +28,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Stream, StreamConfig};
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
@@ -120,17 +120,17 @@ fn audio_control_loop(
     hold_time_ms: Arc<AtomicU32>,
     app: AppHandle,
 ) {
-    let mut current_stream: Option<Stream> = None;
+    let mut _current_stream: Option<Stream> = None;
 
     for command in command_rx {
         match command {
             AudioCommand::Start(device_id) => {
                 // Drop any existing stream first (stops the old mic cleanly).
-                current_stream = None;
-                current_stream = build_and_play_stream(&app, &threshold, &noise_gate, &hold_time_ms, device_id);
+                _current_stream = None;
+                _current_stream = build_and_play_stream(&app, &threshold, &noise_gate, &hold_time_ms, device_id);
             }
             AudioCommand::Stop => {
-                current_stream = None; // dropping a cpal Stream stops it
+                _current_stream = None; // dropping a cpal Stream stops it
             }
         }
     }

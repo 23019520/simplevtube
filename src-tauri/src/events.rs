@@ -53,14 +53,27 @@ pub struct SettingsUpdatedEvent {
     pub noise_gate_threshold: u8,
     /// v1.2: was a hardcoded 200ms constant; now user-adjustable.
     pub mouth_hold_time_ms: u32,
+    /// LEGACY (pre-v1.3): kept only so old data has somewhere to live.
+    /// New code should read idle_frames/talking_frames instead. See
+    /// settings_manager.rs's migration step for how these get folded in.
     pub idle_image_path: Option<String>,
     pub talking_image_path: Option<String>,
+    /// v1.3: the avatar's idle/talking states can now each cycle through
+    /// multiple frames (e.g. blinking, alternating mouth shapes) instead of
+    /// being a single static image. A single-entry list behaves exactly
+    /// like the old single-image behavior.
+    pub idle_frames: Vec<String>,
+    pub talking_frames: Vec<String>,
+    /// Shared cycle speed for both idle_frames and talking_frames.
+    pub frame_interval_ms: u32,
     pub character_window: CharacterWindowState,
     pub theme: String,
+    /// v1.3: pop-up emotes, unrelated to the avatar's own idle/talking cycle.
+    pub emotes: Vec<Emote>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct CharacterWindowState {
     pub x: f64,
     pub y: f64,
@@ -124,8 +137,49 @@ pub struct ProfilesUpdatedEvent {
     pub active_profile: String,
 }
 
+/// v1.3: a pop-up emote — a short sequence of frames shown centered on
+/// screen, unrelated to (not composited onto) the avatar. "Number of
+/// states" from the user's request = frame_paths.len().
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Emote {
+    pub id: String,
+    pub name: String,
+    pub frame_paths: Vec<String>,
+    /// Total on-screen time in ms. Frames are spaced evenly across this
+    /// duration, then the emote disappears.
+    pub duration_ms: u32,
+    /// Optional Alt+<digit> local hotkey (1-9), active while the Control
+    /// Window has focus. See main.js for why this isn't a system-wide
+    /// global hotkey in this version.
+    pub hotkey_digit: Option<u8>,
+}
+
+impl Default for Emote {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: "New Emote".to_string(),
+            frame_paths: Vec::new(),
+            duration_ms: 1500,
+            hotkey_digit: None,
+        }
+    }
+}
+
+/// Emitted when an emote is triggered. The Emote Window is the only
+/// listener — it owns all playback/timing itself once it receives this,
+/// same "dumb renderer, single event in" pattern as the Character Window.
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct EmoteTriggeredEvent {
+    pub frame_paths: Vec<String>,
+    pub duration_ms: u32,
+}
+
 pub const EVT_VOLUME_LEVEL: &str = "volume-level";
 pub const EVT_PROFILES_UPDATED: &str = "profiles-updated";
+pub const EVT_EMOTE_TRIGGERED: &str = "emote-triggered";
 
 // Event name constants — used on both the emit side (Rust) and the
 // listen side (JS) so a typo can't silently create two different channels.

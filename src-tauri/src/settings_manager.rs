@@ -12,28 +12,47 @@
 // single "Default" profile on first load — nobody's existing setup breaks
 // or resets just because this version added profiles.
 
-use crate::events::{CharacterWindowState, SettingsUpdatedEvent};
+use crate::events::{CharacterWindowState, Emote, SettingsUpdatedEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub microphone_device_id: Option<String>,
     pub sensitivity_threshold: u8,
     pub noise_gate_threshold: u8,
     pub mouth_hold_time_ms: u32,
+    /// LEGACY (pre-v1.3): superseded by idle_frames/talking_frames below.
+    /// Kept as-is (never changing an existing field's type — see the
+    /// migration note on load()) so old configs still parse; migrate()
+    /// folds these into the new frame lists at load time.
     pub idle_image_path: Option<String>,
     pub talking_image_path: Option<String>,
+    /// v1.3: multi-frame cycling for idle/talking (see SettingsUpdatedEvent
+    /// doc comment in events.rs for the full rationale).
+    pub idle_frames: Vec<String>,
+    pub talking_frames: Vec<String>,
+    pub frame_interval_ms: u32,
     pub character_window: CharacterWindowState,
     pub theme: String,
+    /// v1.3: pop-up emotes.
+    pub emotes: Vec<Emote>,
 }
 
-impl Settings {
-    fn defaults() -> Self {
+// FIX: manual Default impl with sensible values (35, "dark", etc.) — NOT
+// #[derive(Default)], which would silently give threshold=0, theme="", and
+// every other field its type's zero-value instead. The container-level
+// #[serde(default)] attribute above still works correctly with a manual
+// impl: when an old config.json is missing a field (e.g. an older version
+// that predates noiseGateThreshold), serde fills in that ONE missing field
+// from this Default impl while keeping every field that IS present in the
+// file — this is what fixed the "mic reset to nothing" bug.
+impl Default for Settings {
+    fn default() -> Self {
         Self {
             microphone_device_id: None,
             sensitivity_threshold: 35, // sensible default per FR-003
@@ -41,8 +60,12 @@ impl Settings {
             mouth_hold_time_ms: 200,
             idle_image_path: None,
             talking_image_path: None,
+            idle_frames: Vec::new(),
+            talking_frames: Vec::new(),
+            frame_interval_ms: 150,
             character_window: CharacterWindowState::default(),
             theme: "dark".to_string(),
+            emotes: Vec::new(),
         }
     }
 }
@@ -56,8 +79,12 @@ impl From<&Settings> for SettingsUpdatedEvent {
             mouth_hold_time_ms: s.mouth_hold_time_ms,
             idle_image_path: s.idle_image_path.clone(),
             talking_image_path: s.talking_image_path.clone(),
+            idle_frames: s.idle_frames.clone(),
+            talking_frames: s.talking_frames.clone(),
+            frame_interval_ms: s.frame_interval_ms,
             character_window: s.character_window.clone(),
             theme: s.theme.clone(),
+            emotes: s.emotes.clone(),
         }
     }
 }
@@ -79,6 +106,25 @@ impl Default for ProfileStore {
         Self {
             active_profile: "Default".to_string(),
             profiles,
+        }
+    }
+}
+
+/// v1.3 migration: folds the legacy single-image fields into the new
+/// frame-list fields for every profile, if the frame lists are still
+/// empty. Idempotent and safe to run on every load — once idle_frames is
+/// populated, this becomes a no-op for that profile forever after.
+fn migrate_legacy_single_frame_fields(store: &mut ProfileStore) {
+    for settings in store.profiles.values_mut() {
+        if settings.idle_frames.is_empty() {
+            if let Some(path) = &settings.idle_image_path {
+                settings.idle_frames = vec![path.clone()];
+            }
+        }
+        if settings.talking_frames.is_empty() {
+            if let Some(path) = &settings.talking_image_path {
+                settings.talking_frames = vec![path.clone()];
+            }
         }
     }
 }
@@ -123,6 +169,9 @@ impl SettingsManager {
             Err(_) => ProfileStore::default(),
         };
 
+        let mut store = store;
+        migrate_legacy_single_frame_fields(&mut store);
+
         let manager = Self {
             path,
             current: Mutex::new(store),
@@ -153,12 +202,9 @@ impl SettingsManager {
         self.get()
     }
 
-    pub fn update_character_window(&self, state: CharacterWindowState) -> Settings {
-        self.update(|s| s.character_window = state)
-    }
-
     /// If a referenced image path no longer exists on disk, clear it so the
     /// UI re-prompts instead of the app crashing on a stale path (SRS FR-006.3).
+    /// v1.3: also prunes any missing paths out of the frame lists and emotes.
     pub fn validate_image_paths(&self) -> Settings {
         self.update(|s| {
             if let Some(p) = &s.idle_image_path {
@@ -171,7 +217,138 @@ impl SettingsManager {
                     s.talking_image_path = None;
                 }
             }
+            s.idle_frames.retain(|p| PathBuf::from(p).exists());
+            s.talking_frames.retain(|p| PathBuf::from(p).exists());
+            for emote in s.emotes.iter_mut() {
+                emote.frame_paths.retain(|p| PathBuf::from(p).exists());
+            }
         })
+    }
+
+    // --- v1.3: avatar multi-frame management ---
+
+    pub fn add_idle_frame(&self, path: String) -> Settings {
+        self.update(|s| s.idle_frames.push(path))
+    }
+
+    pub fn add_talking_frame(&self, path: String) -> Settings {
+        self.update(|s| s.talking_frames.push(path))
+    }
+
+    pub fn remove_idle_frame(&self, index: usize) -> Settings {
+        self.update(|s| {
+            if index < s.idle_frames.len() {
+                s.idle_frames.remove(index);
+            }
+        })
+    }
+
+    pub fn remove_talking_frame(&self, index: usize) -> Settings {
+        self.update(|s| {
+            if index < s.talking_frames.len() {
+                s.talking_frames.remove(index);
+            }
+        })
+    }
+
+    /// Replaces an existing frame in place (used when re-editing a
+    /// thumbnail's crop/position rather than adding a new frame).
+    pub fn replace_idle_frame(&self, index: usize, path: String) -> Settings {
+        self.update(|s| {
+            if let Some(slot) = s.idle_frames.get_mut(index) {
+                *slot = path;
+            }
+        })
+    }
+
+    pub fn replace_talking_frame(&self, index: usize, path: String) -> Settings {
+        self.update(|s| {
+            if let Some(slot) = s.talking_frames.get_mut(index) {
+                *slot = path;
+            }
+        })
+    }
+
+    pub fn set_frame_interval(&self, value: u32) -> Settings {
+        self.update(|s| s.frame_interval_ms = value)
+    }
+
+    // --- v1.3: emote management ---
+
+    pub fn add_emote(&self) -> Emote {
+        let id = format!(
+            "emote_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
+        let emote = Emote {
+            id: id.clone(),
+            ..Emote::default()
+        };
+        self.update(|s| s.emotes.push(emote.clone()));
+        emote
+    }
+
+    pub fn delete_emote(&self, id: &str) -> Settings {
+        self.update(|s| s.emotes.retain(|e| e.id != id))
+    }
+
+    pub fn rename_emote(&self, id: &str, name: String) -> Settings {
+        self.update(|s| {
+            if let Some(e) = s.emotes.iter_mut().find(|e| e.id == id) {
+                e.name = name;
+            }
+        })
+    }
+
+    pub fn set_emote_duration(&self, id: &str, duration_ms: u32) -> Settings {
+        self.update(|s| {
+            if let Some(e) = s.emotes.iter_mut().find(|e| e.id == id) {
+                e.duration_ms = duration_ms;
+            }
+        })
+    }
+
+    pub fn set_emote_hotkey(&self, id: &str, hotkey_digit: Option<u8>) -> Settings {
+        self.update(|s| {
+            if let Some(e) = s.emotes.iter_mut().find(|e| e.id == id) {
+                e.hotkey_digit = hotkey_digit;
+            }
+        })
+    }
+
+    pub fn add_emote_frame(&self, id: &str, path: String) -> Settings {
+        self.update(|s| {
+            if let Some(e) = s.emotes.iter_mut().find(|e| e.id == id) {
+                e.frame_paths.push(path);
+            }
+        })
+    }
+
+    pub fn remove_emote_frame(&self, id: &str, index: usize) -> Settings {
+        self.update(|s| {
+            if let Some(e) = s.emotes.iter_mut().find(|e| e.id == id) {
+                if index < e.frame_paths.len() {
+                    e.frame_paths.remove(index);
+                }
+            }
+        })
+    }
+
+    pub fn replace_emote_frame(&self, id: &str, index: usize, path: String) -> Settings {
+        self.update(|s| {
+            if let Some(e) = s.emotes.iter_mut().find(|e| e.id == id) {
+                if let Some(slot) = e.frame_paths.get_mut(index) {
+                    *slot = path;
+                }
+            }
+        })
+    }
+
+    pub fn find_emote(&self, id: &str) -> Option<Emote> {
+        self.get().emotes.into_iter().find(|e| e.id == id)
     }
 
     // --- v1.2 profile management (Phase 4 of the v2 roadmap) ---

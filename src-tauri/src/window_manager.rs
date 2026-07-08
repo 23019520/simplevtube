@@ -6,13 +6,12 @@
 // Tauri window created from tauri.conf.json, so it doesn't need bespoke
 // management here beyond being looked up by label.
 
-use crate::events::CharacterWindowState;
 use crate::settings_manager::SettingsManager;
 use std::sync::Arc;
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewWindow};
 
 pub const CHARACTER_WINDOW_LABEL: &str = "character";
-pub const CONTROL_WINDOW_LABEL: &str = "control";
+pub const EMOTE_WINDOW_LABEL: &str = "emote";
 
 pub struct WindowManager {
     app: AppHandle,
@@ -26,6 +25,22 @@ impl WindowManager {
 
     fn character_window(&self) -> Option<WebviewWindow> {
         self.app.get_webview_window(CHARACTER_WINDOW_LABEL)
+    }
+
+    fn emote_window(&self) -> Option<WebviewWindow> {
+        self.app.get_webview_window(EMOTE_WINDOW_LABEL)
+    }
+
+    /// v1.3: one-time boot setup for the Emote Window — centers it and
+    /// makes it permanently click-through (it's a purely decorative
+    /// overlay sitting in the middle of the screen; it must never intercept
+    /// clicks meant for whatever's underneath it). Not user-configurable,
+    /// unlike the Character Window's click-through toggle.
+    pub fn setup_emote_window(&self) {
+        if let Some(win) = self.emote_window() {
+            let _ = win.center();
+            let _ = win.set_ignore_cursor_events(true);
+        }
     }
 
     /// Restores the Character Window's last known geometry from settings.
@@ -100,10 +115,6 @@ impl WindowManager {
         }
     }
 
-    pub fn current_state(&self) -> CharacterWindowState {
-        self.settings.get().character_window
-    }
-
     // --- v1.2 additions (Phase 1 of the v2 roadmap) ---
 
     /// Mouse clicks pass through the Character Window entirely when true.
@@ -147,6 +158,21 @@ impl WindowManager {
         let new_width = (current.width * factor).clamp(80.0, 2400.0);
         let new_height = (current.height * factor).clamp(80.0, 2400.0);
         win.set_size(LogicalSize::new(new_width, new_height))
+            .map_err(|e| e.to_string())
+    }
+
+    /// Keyboard-driven alternative to dragging (Ctrl+Arrow keys in the
+    /// Control Window). Respects the lock flag, same as dragging does —
+    /// "Lock position & size" should mean nothing moves it, full stop.
+    pub fn nudge_position(&self, dx: f64, dy: f64) -> Result<(), String> {
+        let current = self.settings.get().character_window;
+        if current.locked {
+            return Ok(()); // silently no-op rather than error; locked is an expected state, not a failure
+        }
+        let win = self
+            .character_window()
+            .ok_or("Character window not found")?;
+        win.set_position(LogicalPosition::new(current.x + dx, current.y + dy))
             .map_err(|e| e.to_string())
     }
 }

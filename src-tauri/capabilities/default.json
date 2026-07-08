@@ -1,9 +1,10 @@
 {
   "identifier": "default",
-  "description": "Default permissions for SimpleVTube — allows both windows to listen for backend events (settings-updated, state-changed, volume-level, device-error) as required by the event-bus architecture in the SRS/Architecture doc, Part C.",
-  "windows": ["control", "character"],
+  "description": "Default permissions for SimpleVTube — allows all three windows to listen for backend events (settings-updated, state-changed, volume-level, device-error, emote-triggered) as required by the event-bus architecture in the SRS/Architecture doc, Part C, and allows the Character Window's drag-to-move feature.",
+  "windows": ["control", "character", "emote"],
   "permissions": [
     "core:default",
-    "core:event:default"
+    "core:event:default",
+    "core:window:allow-start-dragging"
   ]
 }

@@ -16,12 +16,12 @@ const el = {
   profileSelect: document.getElementById("profile-select"),
   btnNewProfile: document.getElementById("btn-new-profile"),
   btnDeleteProfile: document.getElementById("btn-delete-profile"),
-  idlePath: document.getElementById("idle-path"),
-  idlePreview: document.getElementById("idle-preview"),
-  talkingPath: document.getElementById("talking-path"),
-  talkingPreview: document.getElementById("talking-preview"),
-  btnIdle: document.getElementById("btn-idle"),
-  btnTalking: document.getElementById("btn-talking"),
+  idleFramesList: document.getElementById("idle-frames-list"),
+  talkingFramesList: document.getElementById("talking-frames-list"),
+  btnAddIdleFrame: document.getElementById("btn-add-idle-frame"),
+  btnAddTalkingFrame: document.getElementById("btn-add-talking-frame"),
+  frameIntervalSlider: document.getElementById("frame-interval-slider"),
+  frameIntervalValue: document.getElementById("frame-interval-value"),
   micSelect: document.getElementById("mic-select"),
   sensitivitySlider: document.getElementById("sensitivity-slider"),
   sensitivityValue: document.getElementById("sensitivity-value"),
@@ -44,11 +44,28 @@ const el = {
   flipHorizontal: document.getElementById("flip-horizontal"),
   shadowEnabled: document.getElementById("shadow-enabled"),
   outlineEnabled: document.getElementById("outline-enabled"),
+  emotesList: document.getElementById("emotes-list"),
+  btnAddEmote: document.getElementById("btn-add-emote"),
   status: document.getElementById("status"),
   statusText: document.getElementById("status-text"),
+  editorOverlay: document.getElementById("editor-overlay"),
+  editorCanvasWrap: document.getElementById("editor-canvas-wrap"),
+  editorZoomSlider: document.getElementById("editor-zoom-slider"),
+  editorBtnReset: document.getElementById("editor-btn-reset"),
+  editorBtnCancel: document.getElementById("editor-btn-cancel"),
+  editorBtnConfirm: document.getElementById("editor-btn-confirm"),
 };
 
 let currentSettings = null;
+
+function convertPath(path) {
+  return window.__TAURI__.core.convertFileSrc(path);
+}
+
+function setStatus(mode, text) {
+  el.status.className = `status status--${mode}`;
+  el.statusText.textContent = text;
+}
 
 // --- VU meter (signature element): a row of tiles that light up with mic
 // level in real time, with one tile marked as the sensitivity threshold so
@@ -103,22 +120,228 @@ const PEAK_DECAY_PER_TICK = 0.6;
 // only feeding the meter — used by the auto-calibrate routine below.
 let calibrationCollector = null;
 
-function setStatus(mode, text) {
-  el.status.className = `status status--${mode}`;
-  el.statusText.textContent = text;
+// --- v1.3/v1.4: multi-frame thumbnail rendering (shared by avatar + emotes) ---
+// Clicking a thumbnail re-opens the editor on that exact frame (replacing
+// it in place); the small "x" removes it instead, without opening the editor.
+
+function renderFrameThumbs(container, paths, onRemove, onEdit) {
+  container.innerHTML = "";
+  paths.forEach((path, index) => {
+    const thumb = document.createElement("div");
+    thumb.className = "frame-thumb";
+    thumb.style.backgroundImage = `url("${convertPath(path)}")`;
+    thumb.title = "Click to re-crop";
+    thumb.addEventListener("click", () => onEdit(index, path));
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "frame-thumb__remove";
+    removeBtn.type = "button";
+    removeBtn.textContent = "×";
+    removeBtn.title = "Remove";
+    removeBtn.addEventListener("click", (e) => {
+      e.stopPropagation(); // don't also trigger the thumbnail's re-crop click
+      onRemove(index);
+    });
+    thumb.appendChild(removeBtn);
+    container.appendChild(thumb);
+  });
 }
+//
+// Every frame in the app (avatar idle/talking, and emote frames) is forced
+// through this editor before it's saved. It always exports at a fixed
+// EDITOR_SIZE x EDITOR_SIZE resolution regardless of the source image's
+// original size/aspect ratio — this is what guarantees perfect alignment
+// when frames cycle: every frame, from every state, from every emote, is
+// pixel-dimension-identical. All cropping/positioning math happens here in
+// JS via Canvas; the Rust side only ever writes final bytes to disk
+// (save_processed_frame in commands.rs) so there's no duplicate image-math
+// to keep in sync between two languages.
+
+const EDITOR_SIZE = 512;
+const baseCanvas = document.getElementById("editor-base-canvas");
+const baseCtx = baseCanvas.getContext("2d");
+const gridCanvas = document.getElementById("editor-grid-canvas");
+const gridCtx = gridCanvas.getContext("2d");
+
+let editorImage = null;
+let editorOffsetX = 0;
+let editorOffsetY = 0;
+let editorScale = 1;
+let editorBaseScale = 1;
+let editorTarget = null; // { kind: 'idle'|'talking'|'emote', id?, replaceIndex? }
+let editorDragging = false;
+let editorLastX = 0;
+let editorLastY = 0;
+
+function drawEditorGrid() {
+  gridCtx.clearRect(0, 0, EDITOR_SIZE, EDITOR_SIZE);
+  gridCtx.strokeStyle = "rgba(255,255,255,0.3)";
+  gridCtx.lineWidth = 1;
+  const step = EDITOR_SIZE / 4;
+  for (let i = 1; i < 4; i++) {
+    gridCtx.beginPath();
+    gridCtx.moveTo(i * step, 0);
+    gridCtx.lineTo(i * step, EDITOR_SIZE);
+    gridCtx.moveTo(0, i * step);
+    gridCtx.lineTo(EDITOR_SIZE, i * step);
+    gridCtx.stroke();
+  }
+  gridCtx.strokeStyle = "rgba(255,122,89,0.55)";
+  gridCtx.beginPath();
+  gridCtx.moveTo(EDITOR_SIZE / 2, 0);
+  gridCtx.lineTo(EDITOR_SIZE / 2, EDITOR_SIZE);
+  gridCtx.moveTo(0, EDITOR_SIZE / 2);
+  gridCtx.lineTo(EDITOR_SIZE, EDITOR_SIZE / 2);
+  gridCtx.stroke();
+}
+
+function redrawEditorBase() {
+  baseCtx.clearRect(0, 0, EDITOR_SIZE, EDITOR_SIZE);
+  if (!editorImage) return;
+  const w = editorImage.naturalWidth * editorScale;
+  const h = editorImage.naturalHeight * editorScale;
+  baseCtx.drawImage(editorImage, editorOffsetX, editorOffsetY, w, h);
+}
+
+/// Default view: "cover" fit (fills the whole frame with no empty space,
+/// cropping whatever overflows) centered — a sensible starting point most
+/// images won't need much adjustment from.
+function fitEditorImage() {
+  if (!editorImage) return;
+  editorBaseScale = Math.max(
+    EDITOR_SIZE / editorImage.naturalWidth,
+    EDITOR_SIZE / editorImage.naturalHeight
+  );
+  editorScale = editorBaseScale;
+  editorOffsetX = (EDITOR_SIZE - editorImage.naturalWidth * editorScale) / 2;
+  editorOffsetY = (EDITOR_SIZE - editorImage.naturalHeight * editorScale) / 2;
+  el.editorZoomSlider.value = 100;
+  redrawEditorBase();
+}
+
+async function openEditor(path, target) {
+  editorTarget = target;
+  try {
+    const dataUrl = await invoke("read_image_as_data_url", { path });
+    editorImage = new Image();
+    editorImage.onload = fitEditorImage;
+    editorImage.src = dataUrl;
+    el.editorOverlay.classList.remove("hidden");
+    drawEditorGrid();
+  } catch (e) {
+    setStatus("error", String(e));
+  }
+}
+
+function closeEditor() {
+  el.editorOverlay.classList.add("hidden");
+  editorImage = null;
+  editorTarget = null;
+}
+
+async function dispatchEditorTarget(path) {
+  const t = editorTarget;
+  if (t.kind === "idle") {
+    if (t.replaceIndex != null) await invoke("replace_idle_frame", { index: t.replaceIndex, path });
+    else await invoke("append_idle_frame", { path });
+  } else if (t.kind === "talking") {
+    if (t.replaceIndex != null) await invoke("replace_talking_frame", { index: t.replaceIndex, path });
+    else await invoke("append_talking_frame", { path });
+  } else if (t.kind === "emote") {
+    if (t.replaceIndex != null) await invoke("replace_emote_frame", { id: t.id, index: t.replaceIndex, path });
+    else await invoke("append_emote_frame", { id: t.id, path });
+  }
+}
+
+el.editorZoomSlider.addEventListener("input", () => {
+  const pct = Number(el.editorZoomSlider.value);
+  const newScale = editorBaseScale * (pct / 100);
+  // Zoom around the canvas center, not the top-left corner, so the subject
+  // stays roughly in place while zooming instead of drifting off-frame.
+  const cx = EDITOR_SIZE / 2;
+  const cy = EDITOR_SIZE / 2;
+  const imgCx = (cx - editorOffsetX) / editorScale;
+  const imgCy = (cy - editorOffsetY) / editorScale;
+  editorScale = newScale;
+  editorOffsetX = cx - imgCx * editorScale;
+  editorOffsetY = cy - imgCy * editorScale;
+  redrawEditorBase();
+});
+
+el.editorCanvasWrap.addEventListener("mousedown", (e) => {
+  editorDragging = true;
+  editorLastX = e.clientX;
+  editorLastY = e.clientY;
+});
+
+window.addEventListener("mousemove", (e) => {
+  if (!editorDragging) return;
+  const rect = el.editorCanvasWrap.getBoundingClientRect();
+  const scaleFactor = EDITOR_SIZE / rect.width; // CSS px -> canvas px
+  editorOffsetX += (e.clientX - editorLastX) * scaleFactor;
+  editorOffsetY += (e.clientY - editorLastY) * scaleFactor;
+  editorLastX = e.clientX;
+  editorLastY = e.clientY;
+  redrawEditorBase();
+});
+
+window.addEventListener("mouseup", () => {
+  editorDragging = false;
+});
+
+el.editorCanvasWrap.addEventListener(
+  "wheel",
+  (e) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+    const newPct = Math.max(10, Math.min(400, Number(el.editorZoomSlider.value) * factor));
+    el.editorZoomSlider.value = newPct;
+    el.editorZoomSlider.dispatchEvent(new Event("input"));
+  },
+  { passive: false }
+);
+
+el.editorBtnReset.addEventListener("click", fitEditorImage);
+el.editorBtnCancel.addEventListener("click", closeEditor);
+
+el.editorBtnConfirm.addEventListener("click", async () => {
+  const base64Png = baseCanvas.toDataURL("image/png").split(",")[1];
+  try {
+    const path = await invoke("save_processed_frame", { base64Png });
+    await dispatchEditorTarget(path);
+    closeEditor();
+  } catch (e) {
+    setStatus("error", String(e));
+  }
+});
+
+
 
 function applySettingsToUI(settings) {
   currentSettings = settings;
 
-  el.idlePath.textContent = settings.idleImagePath ?? "Not set";
-  el.talkingPath.textContent = settings.talkingImagePath ?? "Not set";
-  if (settings.idleImagePath) {
-    el.idlePreview.style.backgroundImage = `url("${convertPath(settings.idleImagePath)}")`;
-  }
-  if (settings.talkingImagePath) {
-    el.talkingPreview.style.backgroundImage = `url("${convertPath(settings.talkingImagePath)}")`;
-  }
+  renderFrameThumbs(
+    el.idleFramesList,
+    settings.idleFrames || [],
+    async (index) => {
+      await invoke("remove_idle_frame", { index });
+    },
+    (index, path) => {
+      openEditor(path, { kind: "idle", replaceIndex: index });
+    }
+  );
+  renderFrameThumbs(
+    el.talkingFramesList,
+    settings.talkingFrames || [],
+    async (index) => {
+      await invoke("remove_talking_frame", { index });
+    },
+    (index, path) => {
+      openEditor(path, { kind: "talking", replaceIndex: index });
+    }
+  );
+
+  el.frameIntervalSlider.value = settings.frameIntervalMs;
+  el.frameIntervalValue.textContent = `${settings.frameIntervalMs}ms`;
 
   el.sensitivitySlider.value = settings.sensitivityThreshold;
   el.sensitivityValue.textContent = settings.sensitivityThreshold;
@@ -149,6 +372,8 @@ function applySettingsToUI(settings) {
   if (settings.microphoneDeviceId) {
     el.micSelect.value = settings.microphoneDeviceId;
   }
+
+  renderEmotes(settings.emotes || []);
 }
 
 function applyProfilesToUI(payload) {
@@ -160,16 +385,139 @@ function applyProfilesToUI(payload) {
     el.profileSelect.appendChild(opt);
   }
   el.profileSelect.value = payload.activeProfile;
-  // Never allow deleting the last remaining profile.
   el.btnDeleteProfile.disabled = payload.profiles.length <= 1;
   el.btnDeleteProfile.style.opacity = el.btnDeleteProfile.disabled ? "0.4" : "1";
 }
 
-// Tauri asset paths need conversion to be usable in <img>/background-image.
-// convertFileSrc is imported lazily to keep this file readable top-to-bottom.
-function convertPath(path) {
-  // eslint-disable-next-line no-undef
-  return window.__TAURI__.core.convertFileSrc(path);
+// --- v1.3: emote cards ---
+
+function renderEmotes(emotes) {
+  el.emotesList.innerHTML = "";
+  for (const emote of emotes) {
+    el.emotesList.appendChild(buildEmoteCard(emote));
+  }
+}
+
+function buildEmoteCard(emote) {
+  const card = document.createElement("div");
+  card.className = "emote-card";
+
+  const header = document.createElement("div");
+  header.className = "emote-card__header";
+
+  const nameInput = document.createElement("input");
+  nameInput.className = "emote-card__name";
+  nameInput.value = emote.name;
+  nameInput.addEventListener("change", async () => {
+    await invoke("rename_emote", { id: emote.id, name: nameInput.value });
+  });
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.className = "btn btn--ghost btn--icon";
+  deleteBtn.type = "button";
+  deleteBtn.textContent = "🗑";
+  deleteBtn.title = "Delete emote";
+  deleteBtn.addEventListener("click", async () => {
+    if (window.confirm(`Delete emote "${emote.name}"?`)) {
+      await invoke("delete_emote", { id: emote.id });
+    }
+  });
+
+  header.appendChild(nameInput);
+  header.appendChild(deleteBtn);
+  card.appendChild(header);
+
+  const thumbsContainer = document.createElement("div");
+  thumbsContainer.className = "frame-thumbs";
+  renderFrameThumbs(
+    thumbsContainer,
+    emote.framePaths || [],
+    async (index) => {
+      await invoke("remove_emote_frame", { id: emote.id, index });
+    },
+    (index, path) => {
+      openEditor(path, { kind: "emote", id: emote.id, replaceIndex: index });
+    }
+  );
+  card.appendChild(thumbsContainer);
+
+  const addFrameBtn = document.createElement("button");
+  addFrameBtn.className = "btn-link";
+  addFrameBtn.type = "button";
+  addFrameBtn.textContent = "+ Add image";
+  addFrameBtn.style.marginTop = "6px";
+  addFrameBtn.addEventListener("click", async () => {
+    try {
+      const path = await invoke("pick_image_file");
+      openEditor(path, { kind: "emote", id: emote.id });
+    } catch (e) {
+      setStatus("error", String(e));
+    }
+  });
+  card.appendChild(addFrameBtn);
+
+  const durationRow = document.createElement("div");
+  durationRow.className = "emote-card__row";
+  const durationLabel = document.createElement("span");
+  durationLabel.textContent = `${emote.durationMs}ms`;
+  const durationSlider = document.createElement("input");
+  durationSlider.type = "range";
+  durationSlider.className = "slider";
+  durationSlider.min = "200";
+  durationSlider.max = "10000";
+  durationSlider.step = "100";
+  durationSlider.value = emote.durationMs;
+  durationSlider.addEventListener("input", async () => {
+    const value = Number(durationSlider.value);
+    durationLabel.textContent = `${value}ms`;
+    await invoke("set_emote_duration", { id: emote.id, durationMs: value });
+  });
+  durationRow.appendChild(durationSlider);
+  durationRow.appendChild(durationLabel);
+  card.appendChild(durationRow);
+
+  const hotkeyRow = document.createElement("div");
+  hotkeyRow.className = "emote-card__row";
+  const hotkeyLabel = document.createElement("span");
+  hotkeyLabel.textContent = "Alt+";
+  const hotkeySelect = document.createElement("select");
+  hotkeySelect.className = "emote-card__hotkey";
+  const noneOpt = document.createElement("option");
+  noneOpt.value = "";
+  noneOpt.textContent = "None";
+  hotkeySelect.appendChild(noneOpt);
+  for (let i = 1; i <= 9; i++) {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = String(i);
+    hotkeySelect.appendChild(opt);
+  }
+  hotkeySelect.value = emote.hotkeyDigit != null ? String(emote.hotkeyDigit) : "";
+  hotkeySelect.addEventListener("change", async () => {
+    const digit = hotkeySelect.value === "" ? null : Number(hotkeySelect.value);
+    await invoke("set_emote_hotkey", { id: emote.id, hotkeyDigit: digit });
+  });
+  hotkeyRow.appendChild(hotkeyLabel);
+  hotkeyRow.appendChild(hotkeySelect);
+  card.appendChild(hotkeyRow);
+
+  const actions = document.createElement("div");
+  actions.className = "emote-card__actions";
+  const testBtn = document.createElement("button");
+  testBtn.className = "btn btn--primary";
+  testBtn.type = "button";
+  testBtn.textContent = "Test";
+  testBtn.addEventListener("click", async () => {
+    try {
+      await invoke("trigger_emote", { id: emote.id });
+    } catch (e) {
+      setStatus("error", String(e));
+    }
+  });
+  actions.appendChild(testBtn);
+  card.appendChild(actions);
+
+  return card;
 }
 
 async function loadMicrophones() {
@@ -196,8 +544,8 @@ async function loadMicrophones() {
 
 function canLaunch() {
   return (
-    currentSettings?.idleImagePath &&
-    currentSettings?.talkingImagePath &&
+    (currentSettings?.idleFrames?.length ?? 0) > 0 &&
+    (currentSettings?.talkingFrames?.length ?? 0) > 0 &&
     el.micSelect.value
   );
 }
@@ -209,20 +557,28 @@ function refreshLaunchButtonState() {
 
 // --- Wiring: user actions -> backend commands (contract table C.3) ---
 
-el.btnIdle.addEventListener("click", async () => {
+el.btnAddIdleFrame.addEventListener("click", async () => {
   try {
-    await invoke("select_idle_image");
+    const path = await invoke("pick_image_file");
+    openEditor(path, { kind: "idle" });
   } catch (e) {
-    setStatus("error", e);
+    setStatus("error", String(e));
   }
 });
 
-el.btnTalking.addEventListener("click", async () => {
+el.btnAddTalkingFrame.addEventListener("click", async () => {
   try {
-    await invoke("select_talking_image");
+    const path = await invoke("pick_image_file");
+    openEditor(path, { kind: "talking" });
   } catch (e) {
-    setStatus("error", e);
+    setStatus("error", String(e));
   }
+});
+
+el.frameIntervalSlider.addEventListener("input", async () => {
+  const value = Number(el.frameIntervalSlider.value);
+  el.frameIntervalValue.textContent = `${value}ms`;
+  await invoke("set_frame_interval", { value });
 });
 
 el.micSelect.addEventListener("change", async () => {
@@ -242,8 +598,8 @@ el.sensitivitySlider.addEventListener("input", async () => {
 
 el.btnLaunch.addEventListener("click", async () => {
   if (!canLaunch()) {
-    if (!currentSettings?.idleImagePath) return setStatus("error", "Please choose an idle image.");
-    if (!currentSettings?.talkingImagePath) return setStatus("error", "Please choose a talking image.");
+    if (!(currentSettings?.idleFrames?.length > 0)) return setStatus("error", "Please add at least one idle frame.");
+    if (!(currentSettings?.talkingFrames?.length > 0)) return setStatus("error", "Please add at least one talking frame.");
     if (!el.micSelect.value) return setStatus("error", "No microphone detected.");
     return;
   }
@@ -316,17 +672,18 @@ el.outlineEnabled.addEventListener("change", async () => {
   await invoke("set_outline_enabled", { value: el.outlineEnabled.checked });
 });
 
-// Character scaling hotkeys: Ctrl+= grows, Ctrl+- shrinks.
-document.addEventListener("keydown", async (e) => {
-  if (!e.ctrlKey && !e.metaKey) return;
-  if (e.key === "=" || e.key === "+") {
-    e.preventDefault();
-    await invoke("nudge_character_size", { grow: true });
-  } else if (e.key === "-" || e.key === "_") {
-    e.preventDefault();
-    await invoke("nudge_character_size", { grow: false });
-  }
+// --- v1.3: emotes ---
+
+el.btnAddEmote.addEventListener("click", async () => {
+  await invoke("add_emote");
 });
+
+// --- Keyboard shortcuts ---
+// v1.5: moved to system-wide global hotkeys (registered in main.rs via
+// tauri-plugin-global-shortcut) so Ctrl+=/-/Arrow and Alt+digit work even
+// while OBS or a game has focus, not just this window. The local DOM
+// keydown handler that used to live here was removed — keeping both would
+// have double-fired every action while this window happened to have focus.
 
 // --- v1.2 Phase 4: profiles ---
 
@@ -351,9 +708,6 @@ el.btnDeleteProfile.addEventListener("click", async () => {
 });
 
 // --- v1.2 Phase 1: drag-and-drop image loading ---
-// Tauri's native drag-drop hands over real filesystem paths (unlike a
-// plain browser drop, which only gives opaque File blobs with no path) —
-// see set_image_from_dropped_path in commands.rs.
 
 function isPointInRect(x, y, rect) {
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
@@ -366,8 +720,8 @@ async function handleDroppedPaths(paths, clientX, clientY) {
     return;
   }
   const path = pngPaths[0];
-  const idleRect = el.idlePreview.closest(".picker-row").getBoundingClientRect();
-  const talkingRect = el.talkingPreview.closest(".picker-row").getBoundingClientRect();
+  const idleRect = el.idleFramesList.closest(".frame-group").getBoundingClientRect();
+  const talkingRect = el.talkingFramesList.closest(".frame-group").getBoundingClientRect();
 
   let isIdle;
   if (isPointInRect(clientX, clientY, talkingRect)) {
@@ -375,13 +729,14 @@ async function handleDroppedPaths(paths, clientX, clientY) {
   } else if (isPointInRect(clientX, clientY, idleRect)) {
     isIdle = true;
   } else {
-    // Dropped elsewhere in the window: fill whichever slot is still empty,
-    // defaulting to idle if both are already set.
-    isIdle = !currentSettings?.idleImagePath || !!currentSettings?.talkingImagePath;
+    const idleCount = currentSettings?.idleFrames?.length ?? 0;
+    const talkingCount = currentSettings?.talkingFrames?.length ?? 0;
+    isIdle = idleCount <= talkingCount;
   }
 
   try {
-    await invoke("set_image_from_dropped_path", { path, isIdle });
+    const validPath = await invoke("validate_image_path", { path });
+    openEditor(validPath, { kind: isIdle ? "idle" : "talking" });
   } catch (e) {
     setStatus("error", String(e));
   }
@@ -408,8 +763,7 @@ async function handleDroppedPaths(paths, clientX, clientY) {
   }
 })();
 
-// --- Auto-calibrate: listens to your room's silence, then your normal
-// speaking voice, and picks a sensible threshold between the two. ---
+// --- Auto-calibrate ---
 
 function collectRawSamples(durationMs) {
   return new Promise((resolve) => {
@@ -444,9 +798,6 @@ el.btnCalibrate.addEventListener("click", async () => {
       return;
     }
 
-    // 90th percentile of "quiet" guards against one stray click/cough
-    // skewing the floor too low. 60th percentile of "speaking" represents
-    // your typical loud syllables, ignoring natural pauses between words.
     const noiseCeiling = percentile(noiseSamples, 0.9);
     const speechTypical = percentile(speechSamples, 0.6);
 
@@ -511,12 +862,32 @@ listen("device-error", (event) => {
 
 // --- Initial load ---
 
+// FIX: on startup, Tauri's webview can finish loading and start calling
+// invoke() before Rust's setup() has finished registering app state
+// (app.manage() runs concurrently with the webview loading, not strictly
+// before it). If that race is lost, the very first invoke() call throws
+// "state not managed" and every future correctly-timed retry would have
+// succeeded fine. Rather than depend on winning a timing race, retry a
+// few times with a short delay — this makes startup robust regardless of
+// how slow setup() ever becomes in the future, not just today's cause.
+async function invokeWithRetry(command, args, attempts = 10, delayMs = 100) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await invoke(command, args);
+    } catch (e) {
+      const isStateRace = typeof e === "string" && e.includes("state not managed");
+      if (!isStateRace || i === attempts - 1) throw e;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 (async function init() {
   setStatus("idle", "Starting up…");
   buildVuMeter();
-  const settings = await invoke("get_settings");
+  const settings = await invokeWithRetry("get_settings");
   applySettingsToUI(settings);
-  const profiles = await invoke("list_profiles");
+  const profiles = await invokeWithRetry("list_profiles");
   applyProfilesToUI(profiles);
   await loadMicrophones();
   refreshLaunchButtonState();

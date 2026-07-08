@@ -29,8 +29,23 @@
         "resizable": true,
         "transparent": true,
         "decorations": false,
+        "shadow": false,
         "alwaysOnTop": true,
         "visible": false,
+        "skipTaskbar": true
+      },
+      {
+        "label": "emote",
+        "title": "SimpleVTube Emote",
+        "url": "emote-window/index.html",
+        "width": 500,
+        "height": 500,
+        "resizable": false,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visible": true,
         "skipTaskbar": true
       }
     ],

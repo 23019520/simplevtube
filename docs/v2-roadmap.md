@@ -10,6 +10,11 @@ Source: v2 wishlist (29 items). Grouped by what they actually require to build, 
 - **Phase 2 — Character presentation** (shipped in v1.2): shadows, outlines, rotation, scaling hotkeys (Ctrl+=/Ctrl+-)
 - **Phase 4 — Profiles** (shipped in v1.2): multiple named profiles with automatic migration from older configs, one-click switching, create/delete
 
+## 🟡 Partially done (v1.3)
+- **A scoped slice of Phase 3**: idle/talking can now cycle through multiple static frames (blinking, alternating mouth shapes). What's still NOT built: procedural animation (breathing, bobbing), sprite-sheet decoding, and animated GIF/APNG/WebP file support — those remain a genuinely separate, larger undertaking.
+- **A scoped slice of Phase 5**: pop-up emotes with configurable frames/duration and local (in-app-focus) Alt+digit hotkeys now exist. What's still NOT built: a true system-wide global hotkey (would need the tauri-plugin-global-shortcut plugin, a new dependency + capability, deliberately deferred), and any kind of visual "emote wheel" picker UI.
+
+
 ## 🟠 Phase 3 — Animation system (large — this is a real architecture change)
 Everything below assumes a character can have **multiple frames per state**, not one static PNG. That means: a new sprite-sequence data model, a frame-timing/playback engine, and settings UI to manage frame lists. This is the biggest single piece of work on the list, and several other items depend on it landing first:
 - Random blinking

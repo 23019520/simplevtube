@@ -28,24 +28,32 @@
     <section class="section" aria-labelledby="character-heading">
       <h2 id="character-heading" class="section__label">Character</h2>
 
-      <div class="picker-row">
-        <div class="picker-preview" id="idle-preview" aria-hidden="true"></div>
-        <div class="picker-info">
-          <span class="picker-name">Idle image</span>
-          <span class="picker-path" id="idle-path">Not set</span>
+      <div class="frame-group">
+        <div class="frame-group__header">
+          <span class="picker-name">Idle frames</span>
+          <button class="btn-link" id="btn-add-idle-frame" type="button">+ Add</button>
         </div>
-        <button class="btn btn--ghost" id="btn-idle" type="button">Browse</button>
+        <div class="frame-thumbs" id="idle-frames-list"></div>
       </div>
 
-      <div class="picker-row">
-        <div class="picker-preview" id="talking-preview" aria-hidden="true"></div>
-        <div class="picker-info">
-          <span class="picker-name">Talking image</span>
-          <span class="picker-path" id="talking-path">Not set</span>
+      <div class="frame-group">
+        <div class="frame-group__header">
+          <span class="picker-name">Talking frames</span>
+          <button class="btn-link" id="btn-add-talking-frame" type="button">+ Add</button>
         </div>
-        <button class="btn btn--ghost" id="btn-talking" type="button">Browse</button>
+        <div class="frame-thumbs" id="talking-frames-list"></div>
       </div>
-      <p class="hint">Tip: drag and drop a PNG onto either row above.</p>
+
+      <div class="field">
+        <div class="section__label-row">
+          <span class="field__label">Frame cycle speed</span>
+          <span class="section__value" id="frame-interval-value">150ms</span>
+        </div>
+        <input class="slider" type="range" min="50" max="500" step="10" value="150" id="frame-interval-slider"
+               aria-label="Frame cycle speed in milliseconds" />
+      </div>
+
+      <p class="hint">Add 2+ frames to a state to make it cycle (blinking, mouth shapes). One frame = static, like before. Drag and drop a PNG onto this section too.</p>
     </section>
 
     <section class="section" aria-labelledby="mic-heading">
@@ -125,13 +133,46 @@
       <label class="toggle"><input type="checkbox" id="shadow-enabled" /><span>Drop shadow</span></label>
       <label class="toggle"><input type="checkbox" id="outline-enabled" /><span>Outline</span></label>
 
-      <p class="hint"><kbd>Ctrl</kbd>+<kbd>=</kbd> grows the character, <kbd>Ctrl</kbd>+<kbd>-</kbd> shrinks it.</p>
+      <p class="hint"><kbd>Ctrl</kbd>+<kbd>=</kbd>/<kbd>-</kbd> resizes the character, <kbd>Ctrl</kbd>+arrow keys move it — works anywhere on your PC, even while another app has focus. You can also drag it directly.</p>
+    </details>
+
+    <details class="section section--advanced">
+      <summary class="section__label">Emotes</summary>
+      <div id="emotes-list"></div>
+      <button class="btn btn--ghost" id="btn-add-emote" type="button">+ New emote</button>
+      <p class="hint">Click "Test" on a card to preview it, or assign a number 1-9 for the <kbd>Alt</kbd>+digit hotkey — fires anywhere on your PC, even while another app has focus.</p>
     </details>
 
     <footer class="status" id="status" role="status">
       <span class="status__dot" id="status-dot"></span>
       <span id="status-text">Starting up…</span>
     </footer>
+  </div>
+
+  <div class="editor-overlay hidden" id="editor-overlay">
+    <div class="editor-modal">
+      <h2 class="editor-modal__title">Position your frame</h2>
+      <p class="hint">Drag to reposition, scroll or use the slider to zoom. The grid is just a reference — it isn't part of the saved image.</p>
+
+      <div class="editor-canvas-wrap" id="editor-canvas-wrap">
+        <canvas id="editor-base-canvas" width="512" height="512"></canvas>
+        <canvas id="editor-grid-canvas" width="512" height="512"></canvas>
+      </div>
+
+      <div class="field">
+        <div class="section__label-row">
+          <span class="field__label">Zoom</span>
+        </div>
+        <input class="slider" type="range" id="editor-zoom-slider" min="10" max="400" value="100"
+               aria-label="Zoom level" />
+      </div>
+
+      <div class="editor-modal__actions">
+        <button class="btn btn--ghost" id="editor-btn-reset" type="button">Reset</button>
+        <button class="btn btn--ghost" id="editor-btn-cancel" type="button">Cancel</button>
+        <button class="btn btn--primary" id="editor-btn-confirm" type="button">Use this frame</button>
+      </div>
+    </div>
   </div>
 
   <script src="main.js"></script>

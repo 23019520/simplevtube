@@ -400,6 +400,203 @@ body.drag-over .picker-row {
   border-radius: 8px;
 }
 
+/* --- v1.3: multi-frame thumbnails (avatar idle/talking + emotes) --- */
+
+.frame-group {
+  margin-bottom: 14px;
+}
+
+.frame-group__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.frame-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 44px;
+}
+
+.frame-thumb {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  background-size: cover;
+  background-position: center;
+}
+
+.frame-thumb__remove {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--danger);
+  color: white;
+  border: none;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+body.drag-over .frame-group {
+  outline: 1.5px dashed var(--accent);
+  outline-offset: 4px;
+  border-radius: 8px;
+}
+
+/* --- v1.3: emote cards --- */
+
+.emote-card {
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.emote-card__header {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.emote-card__name {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 13px;
+  padding: 6px 8px;
+}
+
+.emote-card__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.emote-card__row .slider {
+  flex: 1;
+  margin: 0;
+}
+
+.emote-card__hotkey {
+  width: 52px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px;
+}
+
+.emote-card__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.emote-card__actions .btn {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+/* --- v1.4: crop/position editor modal --- */
+
+.editor-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 14, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.editor-overlay.hidden {
+  display: none;
+}
+
+.editor-modal {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px 20px;
+  width: 340px;
+  max-width: 90vw;
+}
+
+.editor-modal__title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.editor-canvas-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  margin: 12px 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background:
+    linear-gradient(45deg, #2a2c38 25%, transparent 25%) -8px 0/16px 16px,
+    linear-gradient(-45deg, #2a2c38 25%, transparent 25%) -8px 0/16px 16px,
+    linear-gradient(45deg, transparent 75%, #2a2c38 75%) -8px 0/16px 16px,
+    linear-gradient(-45deg, transparent 75%, #2a2c38 75%) -8px 0/16px 16px,
+    #1b1d27;
+  cursor: grab;
+  touch-action: none;
+}
+
+.editor-canvas-wrap:active {
+  cursor: grabbing;
+}
+
+.editor-canvas-wrap canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#editor-grid-canvas {
+  pointer-events: none;
+}
+
+.editor-modal__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.editor-modal__actions .btn {
+  flex: 1;
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.frame-thumb {
+  cursor: pointer;
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
