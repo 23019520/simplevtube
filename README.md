@@ -4,7 +4,18 @@ A lightweight PNGTuber desktop app. Talk into your mic, your idle sprite swaps t
 
 This is v1.2, built from the SRS + Architecture design doc (`docs/SimpleVTube_SRS_Architecture.md`) plus Phases 1, 2, and 4 of the v2 roadmap (`docs/v2-roadmap.md`).
 
-## What's new in v1.5
+## What's new in v1.10
+- **Spring-physics reactive jiggle** — a real, live physics simulation (not CSS transitions) driving the character's bounce: a damped spring on vertical position, with squash/stretch derived directly from velocity. Talking triggers a "pop" impulse, and continued speech adds small kicks scaled to how loud you're being — quiet syllables barely register, loud ones visibly react more. Toggle it and its intensity in the Advanced section. Runs at zero cost when disabled — the simulation loop only exists while the toggle is on.
+
+- **Live audio waveform** — a genuine scrolling amplitude trace above the VU meter (not just a single current-level readout), showing the last ~6 seconds of your mic input.
+- **Undo/Redo** — Ctrl+Z / Ctrl+Shift+Z undoes/redoes any settings change: frame additions, effect toggles, slider adjustments, profile edits. Rapid changes (like dragging a slider) are automatically grouped into a single undo step rather than one per pixel of movement. Also available from the command palette.
+
+- **Command palette** — press Ctrl+K (or click the ⌘K button top-right) for instant fuzzy-search access to every action in the app: launch/hide the character, switch profiles, fire any emote by name, toggle any setting, add frames. Type a few letters of what you want (they don't need to be adjacent — "swpro" matches "switch profile") and hit Enter.
+
+- **Onion skinning in the crop editor** — when adding a new frame to a state or emote that already has frames, your most recently added frame now shows through faintly (blurred) beneath the one you're positioning, and the frame before that even fainter and blurrier. Use it to line up eyes, mouths, or any detail that needs to stay put across frames. Doesn't affect the exported image — it's a positioning aid only.
+
+- **Configurable emote position & size** — toggle "Position & resize emote popup on screen" in the Emotes section, and a draggable/resizable placeholder box appears where emotes currently pop up. Move and resize it, then turn the toggle back off. Your custom position and size are remembered from then on (previously this was fixed at 500×500, centered).
+
 - **System-wide global hotkeys** — Ctrl+=/Ctrl+-/Ctrl+Arrow (resize/move the character) and Alt+1 through Alt+9 (fire emotes) now work anywhere on your PC, even while a game, OBS, or any other app has focus. Previously these only worked while the Control Window itself was focused.
 - **Honest tradeoff to know about:** these are genuinely global — Ctrl+= and Ctrl+Arrow are common shortcuts in browsers and some other apps (zoom, text navigation). While SimpleVTube is running, it takes over those combos system-wide. There's no per-shortcut disable in this version; if one conflicts with something you use elsewhere, that's the current cost of it working outside the app at all.
 

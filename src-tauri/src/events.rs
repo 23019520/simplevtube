@@ -70,6 +70,8 @@ pub struct SettingsUpdatedEvent {
     pub theme: String,
     /// v1.3: pop-up emotes, unrelated to the avatar's own idle/talking cycle.
     pub emotes: Vec<Emote>,
+    /// v1.6: where and at what size emotes pop up on screen.
+    pub emote_window: EmoteWindowState,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -96,6 +98,16 @@ pub struct CharacterWindowState {
     pub rotation_deg: f32,
     pub shadow_enabled: bool,
     pub outline_enabled: bool,
+    // --- v1.10: spring-physics reactive jiggle ---
+    /// When true, the Character Window runs a live spring-damper physics
+    /// simulation on the sprite, driven by mic volume — see character-
+    /// window/render.js for the actual simulation (position spring +
+    /// velocity-derived squash/stretch). Off by default: it's a stylistic
+    /// choice, not everyone wants a bouncy character.
+    pub physics_enabled: bool,
+    /// 0-100. Scales impulse strength and squash/stretch magnitude —
+    /// how energetically the character reacts to talking.
+    pub physics_intensity: f32,
 }
 
 impl Default for CharacterWindowState {
@@ -113,6 +125,8 @@ impl Default for CharacterWindowState {
             rotation_deg: 0.0,
             shadow_enabled: false,
             outline_enabled: false,
+            physics_enabled: false,
+            physics_intensity: 50.0,
         }
     }
 }
@@ -177,9 +191,43 @@ pub struct EmoteTriggeredEvent {
     pub duration_ms: u32,
 }
 
+/// v1.6: emitted when reposition mode is toggled, so the Emote Window's
+/// own script can show a draggable/resizable placeholder and stop being
+/// click-through for the duration.
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct EmoteRepositionModeEvent {
+    pub enabled: bool,
+}
+
+/// v1.6: where and at what size emotes pop up on screen. x/y are None
+/// until the user first customizes position (in which case the window
+/// centers itself, matching the original default) — once set, that exact
+/// spot is remembered.
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EmoteWindowState {
+    pub x: Option<f64>,
+    pub y: Option<f64>,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Default for EmoteWindowState {
+    fn default() -> Self {
+        Self {
+            x: None,
+            y: None,
+            width: 500.0,
+            height: 500.0,
+        }
+    }
+}
+
 pub const EVT_VOLUME_LEVEL: &str = "volume-level";
 pub const EVT_PROFILES_UPDATED: &str = "profiles-updated";
 pub const EVT_EMOTE_TRIGGERED: &str = "emote-triggered";
+pub const EVT_EMOTE_REPOSITION_MODE: &str = "emote-reposition-mode";
 
 // Event name constants — used on both the emit side (Rust) and the
 // listen side (JS) so a typo can't silently create two different channels.

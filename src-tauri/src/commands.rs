@@ -12,8 +12,8 @@
 
 use crate::audio_engine::AudioEngine;
 use crate::events::{
-    Emote, EmoteTriggeredEvent, ProfilesUpdatedEvent, SettingsUpdatedEvent, EVT_EMOTE_TRIGGERED,
-    EVT_PROFILES_UPDATED, EVT_SETTINGS_UPDATED,
+    Emote, EmoteRepositionModeEvent, EmoteTriggeredEvent, ProfilesUpdatedEvent, SettingsUpdatedEvent,
+    EVT_EMOTE_REPOSITION_MODE, EVT_EMOTE_TRIGGERED, EVT_PROFILES_UPDATED, EVT_SETTINGS_UPDATED,
 };
 use crate::settings_manager::SettingsManager;
 use crate::window_manager::WindowManager;
@@ -330,6 +330,20 @@ pub fn set_outline_enabled(app: AppHandle, state: State<'_, AppState>, value: bo
     broadcast_settings(&app, &state.settings);
 }
 
+// --- v1.10: spring-physics reactive jiggle ---
+
+#[tauri::command]
+pub fn set_physics_enabled(app: AppHandle, state: State<'_, AppState>, value: bool) {
+    state.settings.update(|s| s.character_window.physics_enabled = value);
+    broadcast_settings(&app, &state.settings);
+}
+
+#[tauri::command]
+pub fn set_physics_intensity(app: AppHandle, state: State<'_, AppState>, value: f32) {
+    state.settings.update(|s| s.character_window.physics_intensity = value.clamp(0.0, 100.0));
+    broadcast_settings(&app, &state.settings);
+}
+
 // --- v1.2 Phase 4: profiles ---
 
 #[tauri::command]
@@ -513,15 +527,51 @@ pub fn nudge_position_via_hotkey(app: &AppHandle, dx: f64, dy: f64) {
     }
 }
 
-/// v1.4 FIX: re-applies centering + click-through for the Emote Window.
-/// The one-time call during Rust's setup() can race with the window
-/// actually being fully realized by the OS (same class of timing issue as
-/// the app-state race fixed in main.rs) — calling this from the Emote
-/// Window's own JS on load guarantees the window definitely exists by
-/// then, since its script couldn't be running otherwise.
+/// v1.4 FIX: re-applies click-through for the Emote Window. The one-time
+/// call during Rust's setup() can race with the window actually being
+/// fully realized by the OS (same class of timing issue as the app-state
+/// race fixed in main.rs) — calling this from the Emote Window's own JS on
+/// load guarantees the window definitely exists by then, since its script
+/// couldn't be running otherwise. Uses reapply_emote_click_through (not
+/// setup_emote_window) so it doesn't re-attach geometry listeners a second
+/// time on top of the one already attached at boot.
 #[tauri::command]
 pub fn finalize_emote_window(state: State<'_, AppState>) {
-    state.windows.setup_emote_window();
+    state.windows.reapply_emote_click_through();
+}
+
+/// v1.6: toggles "reposition mode" — while enabled, the Emote Window
+/// becomes draggable/resizable instead of click-through, and its own JS
+/// shows a placeholder box so there's something visible to grab. Position
+/// and size persist automatically via the same geometry-listener pattern
+/// used for the Character Window.
+#[tauri::command]
+pub fn set_emote_reposition_mode(app: AppHandle, state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    // Reposition mode being ON means the user needs to be able to click on
+    // it, i.e. click-through must be OFF — hence the negation.
+    state.windows.set_emote_click_through(!enabled)?;
+    let _ = app.emit(EVT_EMOTE_REPOSITION_MODE, EmoteRepositionModeEvent { enabled });
+    Ok(())
+}
+
+// --- v1.9: undo/redo ---
+
+#[tauri::command]
+pub fn undo_settings(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.settings.undo()?;
+    apply_active_profile_audio(&state); // undo can switch profiles, which may change the active mic/thresholds
+    broadcast_settings(&app, &state.settings);
+    broadcast_profiles(&app, &state.settings);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn redo_settings(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.settings.redo()?;
+    apply_active_profile_audio(&state);
+    broadcast_settings(&app, &state.settings);
+    broadcast_profiles(&app, &state.settings);
+    Ok(())
 }
 
 /// Returns the full current settings snapshot — used by src/main.js on

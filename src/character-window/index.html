@@ -21,11 +21,23 @@
       /* v1.2: all character-effect values are set as CSS custom properties
          from render.js based on settings-updated, and combined here into a
          single transform/filter. Kept in one place so the "how it looks"
-         logic stays declarative rather than scattered across JS. */
+         logic stays declarative rather than scattered across JS.
+         v1.10: --bounce-y/--squash-x/--squash-y are the exception — those
+         are updated every animation frame directly by the physics loop
+         (not by settings-updated), since they're simulation output, not a
+         static setting. Composed into the same transform chain either way. */
       --flip: 1;
       --rotate: 0deg;
+      --bounce-y: 0px;
+      --squash-x: 1;
+      --squash-y: 1;
       opacity: var(--opacity, 1);
-      transform: scaleX(var(--flip)) rotate(var(--rotate));
+      transform:
+        translateY(var(--bounce-y))
+        scaleX(calc(var(--flip) * var(--squash-x)))
+        scaleY(var(--squash-y))
+        rotate(var(--rotate));
+      transform-origin: center bottom; /* squash/stretch reads more natural anchored at the "feet" */
       filter: var(--effect-filter, none);
     }
   </style>

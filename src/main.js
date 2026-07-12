@@ -26,6 +26,7 @@ const el = {
   sensitivitySlider: document.getElementById("sensitivity-slider"),
   sensitivityValue: document.getElementById("sensitivity-value"),
   vuMeter: document.getElementById("vu-meter"),
+  waveformCanvas: document.getElementById("waveform-canvas"),
   vuPeakMarker: document.getElementById("vu-peak-marker"),
   btnCalibrate: document.getElementById("btn-calibrate"),
   btnLaunch: document.getElementById("btn-launch"),
@@ -44,16 +45,25 @@ const el = {
   flipHorizontal: document.getElementById("flip-horizontal"),
   shadowEnabled: document.getElementById("shadow-enabled"),
   outlineEnabled: document.getElementById("outline-enabled"),
+  physicsEnabled: document.getElementById("physics-enabled"),
+  physicsIntensitySlider: document.getElementById("physics-intensity-slider"),
+  physicsIntensityValue: document.getElementById("physics-intensity-value"),
   emotesList: document.getElementById("emotes-list"),
   btnAddEmote: document.getElementById("btn-add-emote"),
+  emoteRepositionMode: document.getElementById("emote-reposition-mode"),
   status: document.getElementById("status"),
   statusText: document.getElementById("status-text"),
   editorOverlay: document.getElementById("editor-overlay"),
   editorCanvasWrap: document.getElementById("editor-canvas-wrap"),
   editorZoomSlider: document.getElementById("editor-zoom-slider"),
+  editorOnionToggle: document.getElementById("editor-onion-toggle"),
   editorBtnReset: document.getElementById("editor-btn-reset"),
   editorBtnCancel: document.getElementById("editor-btn-cancel"),
   editorBtnConfirm: document.getElementById("editor-btn-confirm"),
+  btnOpenPalette: document.getElementById("btn-open-palette"),
+  paletteOverlay: document.getElementById("palette-overlay"),
+  paletteInput: document.getElementById("palette-input"),
+  paletteResults: document.getElementById("palette-results"),
 };
 
 let currentSettings = null;
@@ -100,6 +110,60 @@ function setVuLevel(levelPct) {
   for (let i = 0; i < tiles.length; i++) {
     tiles[i].classList.toggle("is-lit", i < litCount);
   }
+}
+
+// --- v1.9: live scrolling waveform ---
+// A genuine scrolling amplitude trace, not just the VU tiles' single
+// current-level readout. Rides the existing volume-level event (already
+// emitted at ~20Hz from audio_engine.rs) — no backend changes needed,
+// this is purely a different visualization of data already flowing in.
+
+const waveformCtx = el.waveformCanvas.getContext("2d");
+const WAVEFORM_HISTORY = 120; // ~6 seconds at the ~20Hz emit rate
+const waveformHistory = new Array(WAVEFORM_HISTORY).fill(0);
+
+function pushWaveformSample(levelPct) {
+  waveformHistory.push(levelPct);
+  if (waveformHistory.length > WAVEFORM_HISTORY) waveformHistory.shift();
+  drawWaveform();
+}
+
+function drawWaveform() {
+  const w = el.waveformCanvas.width;
+  const h = el.waveformCanvas.height;
+  const mid = h / 2;
+  waveformCtx.clearRect(0, 0, w, h);
+
+  const step = w / (WAVEFORM_HISTORY - 1);
+  const style = getComputedStyle(document.documentElement);
+  const accent = style.getPropertyValue("--accent").trim() || "#ff7a59";
+
+  waveformCtx.beginPath();
+  waveformHistory.forEach((level, i) => {
+    const amplitude = (level / 100) * (mid - 4);
+    const x = i * step;
+    const yTop = mid - amplitude;
+    if (i === 0) waveformCtx.moveTo(x, yTop);
+    else waveformCtx.lineTo(x, yTop);
+  });
+  for (let i = WAVEFORM_HISTORY - 1; i >= 0; i--) {
+    const amplitude = (waveformHistory[i] / 100) * (mid - 4);
+    const x = i * step;
+    const yBottom = mid + amplitude;
+    waveformCtx.lineTo(x, yBottom);
+  }
+  waveformCtx.closePath();
+  waveformCtx.fillStyle = accent;
+  waveformCtx.globalAlpha = 0.75;
+  waveformCtx.fill();
+
+  waveformCtx.globalAlpha = 1;
+  waveformCtx.strokeStyle = "rgba(255,255,255,0.15)";
+  waveformCtx.lineWidth = 1;
+  waveformCtx.beginPath();
+  waveformCtx.moveTo(0, mid);
+  waveformCtx.lineTo(w, mid);
+  waveformCtx.stroke();
 }
 
 // Smooths the raw, jittery per-callback volume readings into something
@@ -157,6 +221,8 @@ function renderFrameThumbs(container, paths, onRemove, onEdit) {
 // to keep in sync between two languages.
 
 const EDITOR_SIZE = 512;
+const onionCanvas = document.getElementById("editor-onion-canvas");
+const onionCtx = onionCanvas.getContext("2d");
 const baseCanvas = document.getElementById("editor-base-canvas");
 const baseCtx = baseCanvas.getContext("2d");
 const gridCanvas = document.getElementById("editor-grid-canvas");
@@ -218,8 +284,104 @@ function fitEditorImage() {
   redrawEditorBase();
 }
 
+// --- v1.7: onion skinning ---
+// Shows the previously-added frame (and the one before it, fainter/more
+// blurred) as a ghost reference beneath the frame you're currently
+// positioning, so cycling animations stay visually aligned. Onion frames
+// are drawn from their FINAL exported form (already 512x512, exactly what
+// they'll look like in the app) — no pan/zoom applies to them, only to the
+// new image you're actively working on.
+
+const ONION_LAYERS = [
+  { alpha: 0.35, blur: 2 }, // most recently added frame
+  { alpha: 0.18, blur: 4 }, // the one before that
+];
+
+/// Finds up to two reference frames for onion skinning.
+///
+/// For idle/talking: the OPPOSITE state's most recent frame is the primary
+/// reference (alpha/blur layer 0) — this is what actually matters most,
+/// since idle and talking need to line up with EACH OTHER so the character
+/// doesn't visibly shift position when it swaps states. This applies even
+/// with just one frame in each state, unlike same-state history which only
+/// exists once you have 2+ frames in one state. The same state's own
+/// immediately-previous frame (if any) is a secondary, fainter reference
+/// for multi-frame cycling alignment within that state.
+///
+/// For emotes: unrelated to idle/talking (they don't composite onto the
+/// avatar), so this stays self-referencing — the emote's own previous 1-2
+/// frames, same as before.
+function getOnionSkinFrames(target) {
+  if (target.kind === "emote") {
+    const emote = (currentSettings?.emotes || []).find((e) => e.id === target.id);
+    const list = emote?.framePaths || [];
+    const cutoff = target.replaceIndex != null ? target.replaceIndex : list.length;
+    return list.slice(Math.max(0, cutoff - 2), cutoff).reverse();
+  }
+
+  const sameList = target.kind === "idle" ? currentSettings?.idleFrames || [] : currentSettings?.talkingFrames || [];
+  const oppositeList = target.kind === "idle" ? currentSettings?.talkingFrames || [] : currentSettings?.idleFrames || [];
+
+  const refs = [];
+  if (oppositeList.length > 0) {
+    refs.push(oppositeList[oppositeList.length - 1]); // most recent frame of the OTHER state
+  }
+  const cutoff = target.replaceIndex != null ? target.replaceIndex : sameList.length;
+  const samePrevious = sameList.slice(Math.max(0, cutoff - 1), cutoff)[0]; // immediately-previous same-state frame
+  if (samePrevious && !refs.includes(samePrevious)) {
+    refs.push(samePrevious);
+  }
+  return refs.slice(0, 2);
+}
+
+function drawOnionSkin(paths) {
+  onionCtx.clearRect(0, 0, EDITOR_SIZE, EDITOR_SIZE);
+  // Draw farthest-back reference first so the most recent frame ends up
+  // visually on top where they overlap.
+  [...paths].reverse().forEach((path, i) => {
+    const layerIndex = paths.length - 1 - i;
+    const cfg = ONION_LAYERS[layerIndex];
+    if (!cfg) return;
+    const img = new Image();
+    img.onload = () => {
+      onionCtx.save();
+      onionCtx.globalAlpha = cfg.alpha;
+      onionCtx.filter = `blur(${cfg.blur}px)`;
+      onionCtx.drawImage(img, 0, 0, EDITOR_SIZE, EDITOR_SIZE);
+      onionCtx.restore();
+    };
+    img.src = convertPath(path);
+  });
+}
+
+
+let onionSkinEnabled = true; // session-level preference, sticky across editor opens
+let editorOnionPaths = []; // computed fresh each time the editor opens, independent of the toggle
+
+/// Applies (or clears) the onion skin based on the current toggle state.
+/// Separated from openEditor so flipping the checkbox mid-edit updates
+/// instantly without needing to recompute which frames are the reference.
+function applyOnionSkinVisibility() {
+  if (onionSkinEnabled && editorOnionPaths.length > 0) {
+    drawOnionSkin(editorOnionPaths);
+    baseCanvas.style.opacity = "0.85";
+  } else {
+    onionCtx.clearRect(0, 0, EDITOR_SIZE, EDITOR_SIZE);
+    baseCanvas.style.opacity = "1";
+  }
+}
+
+el.editorOnionToggle.addEventListener("change", () => {
+  onionSkinEnabled = el.editorOnionToggle.checked;
+  applyOnionSkinVisibility();
+});
+
 async function openEditor(path, target) {
   editorTarget = target;
+
+  editorOnionPaths = getOnionSkinFrames(target);
+  applyOnionSkinVisibility();
+
   try {
     const dataUrl = await invoke("read_image_as_data_url", { path });
     editorImage = new Image();
@@ -236,6 +398,9 @@ function closeEditor() {
   el.editorOverlay.classList.add("hidden");
   editorImage = null;
   editorTarget = null;
+  editorOnionPaths = [];
+  onionCtx.clearRect(0, 0, EDITOR_SIZE, EDITOR_SIZE);
+  baseCanvas.style.opacity = "1";
 }
 
 async function dispatchEditorTarget(path) {
@@ -368,6 +533,10 @@ function applySettingsToUI(settings) {
   el.flipHorizontal.checked = settings.characterWindow.flipped;
   el.shadowEnabled.checked = settings.characterWindow.shadowEnabled;
   el.outlineEnabled.checked = settings.characterWindow.outlineEnabled;
+  el.physicsEnabled.checked = settings.characterWindow.physicsEnabled;
+  const physicsIntensityPct = Math.round(settings.characterWindow.physicsIntensity ?? 50);
+  el.physicsIntensitySlider.value = physicsIntensityPct;
+  el.physicsIntensityValue.textContent = `${physicsIntensityPct}%`;
 
   if (settings.microphoneDeviceId) {
     el.micSelect.value = settings.microphoneDeviceId;
@@ -672,10 +841,31 @@ el.outlineEnabled.addEventListener("change", async () => {
   await invoke("set_outline_enabled", { value: el.outlineEnabled.checked });
 });
 
+el.physicsEnabled.addEventListener("change", async () => {
+  await invoke("set_physics_enabled", { value: el.physicsEnabled.checked });
+});
+
+el.physicsIntensitySlider.addEventListener("input", async () => {
+  const value = Number(el.physicsIntensitySlider.value);
+  el.physicsIntensityValue.textContent = `${value}%`;
+  await invoke("set_physics_intensity", { value });
+});
+
 // --- v1.3: emotes ---
 
 el.btnAddEmote.addEventListener("click", async () => {
   await invoke("add_emote");
+});
+
+// v1.6: emote popup position/size — toggles the Emote Window between
+// click-through/invisible (normal operation) and draggable/resizable with
+// a visible placeholder box (reposition mode).
+el.emoteRepositionMode.addEventListener("change", async () => {
+  try {
+    await invoke("set_emote_reposition_mode", { enabled: el.emoteRepositionMode.checked });
+  } catch (e) {
+    setStatus("error", String(e));
+  }
 });
 
 // --- Keyboard shortcuts ---
@@ -848,6 +1038,8 @@ listen("volume-level", (event) => {
     peakLevel = Math.max(0, peakLevel - PEAK_DECAY_PER_TICK);
   }
   el.vuPeakMarker.style.left = `${peakLevel}%`;
+
+  pushWaveformSample(raw);
 });
 
 listen("device-error", (event) => {
@@ -858,6 +1050,354 @@ listen("device-error", (event) => {
     setStatus("error", "Microphone disconnected.");
   }
   refreshLaunchButtonState();
+});
+
+// --- v1.8: command palette ---
+//
+// A single searchable list of everything actionable in the app. Static
+// entries (toggle a checkbox, open a section) are hand-written below;
+// dynamic entries (one per profile, one per emote) are generated fresh
+// every time the palette opens, so a newly added emote or profile shows up
+// immediately without this list needing to be told about it separately.
+
+function getPaletteActions() {
+  const actions = [
+    {
+      label: "Launch character",
+      category: "Character",
+      icon: "▶",
+      run: () => el.btnLaunch.click(),
+    },
+    {
+      label: "Hide character",
+      category: "Character",
+      icon: "⏸",
+      run: () => invoke("hide_character"),
+    },
+    {
+      label: "Auto-calibrate microphone",
+      category: "Audio",
+      icon: "🎚",
+      run: () => el.btnCalibrate.click(),
+    },
+    {
+      label: "Toggle always-on-top",
+      category: "Character",
+      icon: "📌",
+      run: () => {
+        el.alwaysOnTop.checked = !el.alwaysOnTop.checked;
+        el.alwaysOnTop.dispatchEvent(new Event("change"));
+      },
+    },
+    {
+      label: "Toggle lock position & size",
+      category: "Character",
+      icon: "🔒",
+      run: () => {
+        el.lockPosition.checked = !el.lockPosition.checked;
+        el.lockPosition.dispatchEvent(new Event("change"));
+      },
+    },
+    {
+      label: "Toggle click-through",
+      category: "Character",
+      icon: "👆",
+      run: () => {
+        el.clickThrough.checked = !el.clickThrough.checked;
+        el.clickThrough.dispatchEvent(new Event("change"));
+      },
+    },
+    {
+      label: "Flip character horizontally",
+      category: "Character",
+      icon: "↔",
+      run: () => {
+        el.flipHorizontal.checked = !el.flipHorizontal.checked;
+        el.flipHorizontal.dispatchEvent(new Event("change"));
+      },
+    },
+    {
+      label: "Toggle drop shadow",
+      category: "Character",
+      icon: "🌑",
+      run: () => {
+        el.shadowEnabled.checked = !el.shadowEnabled.checked;
+        el.shadowEnabled.dispatchEvent(new Event("change"));
+      },
+    },
+    {
+      label: "Toggle outline",
+      category: "Character",
+      icon: "◽",
+      run: () => {
+        el.outlineEnabled.checked = !el.outlineEnabled.checked;
+        el.outlineEnabled.dispatchEvent(new Event("change"));
+      },
+    },
+    {
+      label: "Toggle reactive bounce & jiggle (physics)",
+      category: "Character",
+      icon: "🌊",
+      run: () => {
+        el.physicsEnabled.checked = !el.physicsEnabled.checked;
+        el.physicsEnabled.dispatchEvent(new Event("change"));
+      },
+    },
+    {
+      label: "Undo",
+      category: "Edit",
+      icon: "↩",
+      run: () => runUndo(),
+    },
+    {
+      label: "Redo",
+      category: "Edit",
+      icon: "↪",
+      run: () => runRedo(),
+    },
+    {
+      label: "New profile…",
+      category: "Profiles",
+      icon: "➕",
+      run: () => el.btnNewProfile.click(),
+    },
+    {
+      label: "New emote…",
+      category: "Emotes",
+      icon: "➕",
+      run: () => el.btnAddEmote.click(),
+    },
+    {
+      label: "Add idle frame…",
+      category: "Character",
+      icon: "🖼",
+      run: () => el.btnAddIdleFrame.click(),
+    },
+    {
+      label: "Add talking frame…",
+      category: "Character",
+      icon: "🖼",
+      run: () => el.btnAddTalkingFrame.click(),
+    },
+    {
+      label: "Toggle emote position & resize mode",
+      category: "Emotes",
+      icon: "🎯",
+      run: () => {
+        el.emoteRepositionMode.checked = !el.emoteRepositionMode.checked;
+        el.emoteRepositionMode.dispatchEvent(new Event("change"));
+      },
+    },
+  ];
+
+  // Dynamic: one entry per profile, to switch directly to it.
+  for (const name of Array.from(el.profileSelect.options).map((o) => o.value)) {
+    if (!name) continue;
+    actions.push({
+      label: `Switch to profile: ${name}`,
+      category: "Profiles",
+      icon: "👤",
+      run: () => invoke("switch_profile", { name }),
+    });
+  }
+
+  // Dynamic: one entry per emote, to fire it directly.
+  for (const emote of currentSettings?.emotes || []) {
+    actions.push({
+      label: `Fire emote: ${emote.name}`,
+      category: "Emotes",
+      icon: "✨",
+      run: async () => {
+        try {
+          await invoke("trigger_emote", { id: emote.id });
+        } catch (e) {
+          setStatus("error", String(e));
+        }
+      },
+    });
+  }
+
+  return actions;
+}
+
+/// Simple subsequence fuzzy match (like VSCode's palette): every character
+/// of the query must appear in order in the target, not necessarily
+/// adjacent. Returns null if no match, or a score (lower is better) plus
+/// the matched index positions (for highlighting) if it does.
+function fuzzyMatch(query, target) {
+  if (query === "") return { score: 0, positions: [] };
+  const q = query.toLowerCase();
+  const t = target.toLowerCase();
+  const positions = [];
+  let qi = 0;
+  let lastMatch = -1;
+  let gapPenalty = 0;
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) {
+      if (lastMatch >= 0) gapPenalty += ti - lastMatch - 1;
+      positions.push(ti);
+      lastMatch = ti;
+      qi++;
+    }
+  }
+  if (qi < q.length) return null; // not all query chars matched
+  return { score: gapPenalty + t.length * 0.01, positions };
+}
+
+function highlightLabel(label, positions) {
+  if (positions.length === 0) return label;
+  let out = "";
+  let posIdx = 0;
+  for (let i = 0; i < label.length; i++) {
+    if (posIdx < positions.length && positions[posIdx] === i) {
+      out += `<mark>${label[i]}</mark>`;
+      posIdx++;
+    } else {
+      out += label[i];
+    }
+  }
+  return out;
+}
+
+let paletteFiltered = [];
+let paletteActiveIndex = 0;
+
+function renderPaletteResults() {
+  el.paletteResults.innerHTML = "";
+  if (paletteFiltered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "palette-empty";
+    empty.textContent = "No matching commands.";
+    el.paletteResults.appendChild(empty);
+    return;
+  }
+  paletteFiltered.forEach((entry, i) => {
+    const item = document.createElement("div");
+    item.className = "palette-item" + (i === paletteActiveIndex ? " active" : "");
+    item.innerHTML = `
+      <span class="palette-item__icon">${entry.action.icon}</span>
+      <span class="palette-item__label">${highlightLabel(entry.action.label, entry.positions)}</span>
+      <span class="palette-item__category">${entry.action.category}</span>
+    `;
+    item.addEventListener("mouseenter", () => {
+      paletteActiveIndex = i;
+      renderPaletteResults();
+    });
+    item.addEventListener("click", () => runPaletteAction(entry.action));
+    el.paletteResults.appendChild(item);
+  });
+}
+
+function filterPalette(query) {
+  const all = getPaletteActions();
+  const matched = all
+    .map((action) => {
+      const m = fuzzyMatch(query, action.label);
+      return m ? { action, score: m.score, positions: m.positions } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.score - b.score);
+  paletteFiltered = matched;
+  paletteActiveIndex = 0;
+  renderPaletteResults();
+}
+
+async function runPaletteAction(action) {
+  closePalette();
+  try {
+    await action.run();
+  } catch (e) {
+    setStatus("error", String(e));
+  }
+}
+
+function openPalette() {
+  el.paletteOverlay.classList.remove("hidden");
+  el.paletteInput.value = "";
+  filterPalette("");
+  el.paletteInput.focus();
+}
+
+function closePalette() {
+  el.paletteOverlay.classList.add("hidden");
+}
+
+el.btnOpenPalette.addEventListener("click", openPalette);
+
+el.paletteInput.addEventListener("input", () => {
+  filterPalette(el.paletteInput.value);
+});
+
+el.paletteOverlay.addEventListener("click", (e) => {
+  if (e.target === el.paletteOverlay) closePalette();
+});
+
+el.paletteInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    paletteActiveIndex = Math.min(paletteActiveIndex + 1, paletteFiltered.length - 1);
+    renderPaletteResults();
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    paletteActiveIndex = Math.max(paletteActiveIndex - 1, 0);
+    renderPaletteResults();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    const entry = paletteFiltered[paletteActiveIndex];
+    if (entry) runPaletteAction(entry.action);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closePalette();
+  }
+});
+
+// Ctrl+K (or Cmd+K on macOS) opens the palette from anywhere in this
+// window. This one stays a local (not global-OS) shortcut deliberately —
+// unlike the character resize/move/emote hotkeys, the palette only makes
+// sense while looking at this window, so there's no reason to fight other
+// apps for this key combo system-wide.
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    if (el.paletteOverlay.classList.contains("hidden")) {
+      openPalette();
+    } else {
+      closePalette();
+    }
+  }
+});
+
+// --- v1.9: undo/redo ---
+// Local shortcut (not global-OS), same reasoning as the palette above —
+// undo only makes sense for changes made in this window.
+async function runUndo() {
+  try {
+    await invoke("undo_settings");
+    setStatus("listening", "● Undone");
+  } catch (e) {
+    setStatus("idle", String(e)); // "Nothing to undo." isn't really an error
+  }
+}
+
+async function runRedo() {
+  try {
+    await invoke("redo_settings");
+    setStatus("listening", "● Redone");
+  } catch (e) {
+    setStatus("idle", String(e));
+  }
+}
+
+document.addEventListener("keydown", (e) => {
+  const isTyping = document.activeElement && ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName);
+  if (isTyping) return;
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "z") return;
+  e.preventDefault();
+  if (e.shiftKey) {
+    runRedo();
+  } else {
+    runUndo();
+  }
 });
 
 // --- Initial load ---

@@ -40,7 +40,7 @@
         "url": "emote-window/index.html",
         "width": 500,
         "height": 500,
-        "resizable": false,
+        "resizable": true,
         "transparent": true,
         "decorations": false,
         "shadow": false,
@@ -61,7 +61,9 @@
     "active": true,
     "targets": "all",
     "icon": [
-      "icons/icon.png"
+      "icons/icon.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
     ]
   }
 }

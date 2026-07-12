@@ -31,15 +31,72 @@ impl WindowManager {
         self.app.get_webview_window(EMOTE_WINDOW_LABEL)
     }
 
-    /// v1.3: one-time boot setup for the Emote Window — centers it and
-    /// makes it permanently click-through (it's a purely decorative
-    /// overlay sitting in the middle of the screen; it must never intercept
-    /// clicks meant for whatever's underneath it). Not user-configurable,
-    /// unlike the Character Window's click-through toggle.
+    /// v1.6: restores saved position/size if the user has customized it via
+    /// reposition mode, else centers it (first-run default, unchanged from
+    /// before this feature existed). Also applies click-through, and wires
+    /// up geometry persistence. Called once at boot.
     pub fn setup_emote_window(&self) {
         if let Some(win) = self.emote_window() {
-            let _ = win.center();
+            let saved = self.settings.get().emote_window;
+            let _ = win.set_size(LogicalSize::new(saved.width, saved.height));
+            match (saved.x, saved.y) {
+                (Some(x), Some(y)) => {
+                    let _ = win.set_position(LogicalPosition::new(x, y));
+                }
+                _ => {
+                    let _ = win.center();
+                }
+            }
             let _ = win.set_ignore_cursor_events(true);
+            self.attach_emote_geometry_listeners();
+        }
+    }
+
+    /// Re-applies just click-through, from a guaranteed-safe timing point
+    /// (the Emote Window's own JS calling this on load — see
+    /// finalize_emote_window in commands.rs). Deliberately doesn't touch
+    /// position or re-attach listeners, since setup_emote_window already
+    /// did that once at boot and doing it twice would double-write on
+    /// every move/resize.
+    pub fn reapply_emote_click_through(&self) {
+        if let Some(win) = self.emote_window() {
+            let _ = win.set_ignore_cursor_events(true);
+        }
+    }
+
+    /// v1.6: toggles whether the Emote Window can be dragged/resized right
+    /// now. true = reposition mode (interactive), false = normal operation
+    /// (click-through, invisible until an emote fires).
+    pub fn set_emote_click_through(&self, click_through: bool) -> Result<(), String> {
+        let win = self
+            .emote_window()
+            .ok_or("Emote window not found")?;
+        win.set_ignore_cursor_events(click_through).map_err(|e| e.to_string())
+    }
+
+    fn attach_emote_geometry_listeners(&self) {
+        if let Some(win) = self.emote_window() {
+            let settings = self.settings.clone();
+            let win_for_closure = win.clone();
+            win.on_window_event(move |event| match event {
+                tauri::WindowEvent::Moved(pos) => {
+                    let scale = win_for_closure.scale_factor().unwrap_or(1.0);
+                    let logical = pos.to_logical::<f64>(scale);
+                    settings.update(|s| {
+                        s.emote_window.x = Some(logical.x);
+                        s.emote_window.y = Some(logical.y);
+                    });
+                }
+                tauri::WindowEvent::Resized(size) => {
+                    let scale = win_for_closure.scale_factor().unwrap_or(1.0);
+                    let logical = size.to_logical::<f64>(scale);
+                    settings.update(|s| {
+                        s.emote_window.width = logical.width.max(80.0);
+                        s.emote_window.height = logical.height.max(80.0);
+                    });
+                }
+                _ => {}
+            });
         }
     }
 

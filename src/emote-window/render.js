@@ -58,3 +58,20 @@ listen("emote-triggered", (event) => {
   }, durationMs);
   activeTimers.push(hideTimer);
 });
+
+// v1.6: reposition mode — the Control Window toggles this so you can
+// drag/resize where emotes pop up. While active, the window stops being
+// click-through (see set_emote_reposition_mode in commands.rs) and this
+// script shows a placeholder box (via the "reposition-mode" body class in
+// index.html) plus a drag region, so there's always something visible and
+// grabbable even if no emote is currently playing.
+listen("emote-reposition-mode", (event) => {
+  const { enabled } = event.payload;
+  if (enabled) {
+    document.body.classList.add("reposition-mode");
+    document.body.setAttribute("data-tauri-drag-region", "");
+  } else {
+    document.body.classList.remove("reposition-mode");
+    document.body.removeAttribute("data-tauri-drag-region");
+  }
+});

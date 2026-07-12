@@ -52,6 +52,89 @@ function startCycle(frames) {
   }
 }
 
+// --- v1.10: spring-physics reactive jiggle ---
+//
+// A real (if simple) physics simulation: a single critically-ish-damped
+// spring on the sprite's vertical offset, driven by two kinds of impulses —
+// a strong one-time "pop" when speech starts, and small continuous kicks
+// proportional to loudness while talking continues. Squash/stretch is
+// derived directly from the spring's current velocity (fast movement =
+// compressed/stretched), not a second independent spring, to keep this
+// simple enough to reason about and tune without a real device to test on.
+//
+// This module owns its own requestAnimationFrame loop, started/stopped
+// based on the physicsEnabled setting — it does NOT run when disabled, so
+// it costs nothing (matches the app's "minimal CPU" NFR) for anyone who
+// doesn't want the bounce.
+
+const PHYSICS_STIFFNESS = 220; // spring constant — higher = snaps back faster
+const PHYSICS_DAMPING = 16; // higher = settles faster, less oscillation
+const PHYSICS_SQUASH_FACTOR = 0.012; // how much velocity translates to squash/stretch
+const PHYSICS_MAX_STRETCH = 1.18;
+const PHYSICS_MIN_SQUASH = 0.82;
+
+let physicsEnabled = false;
+let physicsIntensity = 50; // 0-100, mirrors settings.characterWindow.physicsIntensity
+let physicsPosY = 0;
+let physicsVelY = 0;
+let physicsRafId = null;
+let physicsLastTs = null;
+
+function physicsIntensityScale() {
+  return physicsIntensity / 50; // 50 (default) => 1x, i.e. the tuned constants above assume "50"
+}
+
+function physicsImpulse(strength) {
+  physicsVelY -= strength * physicsIntensityScale();
+}
+
+function physicsTick(ts) {
+  if (!physicsEnabled) {
+    physicsRafId = null;
+    return;
+  }
+  if (physicsLastTs == null) physicsLastTs = ts;
+  const dt = Math.min((ts - physicsLastTs) / 1000, 0.05); // clamp so a stalled/backgrounded tab can't produce a huge dt jump
+  physicsLastTs = ts;
+
+  // Semi-implicit (symplectic) Euler integration of a damped spring
+  // pulling back toward 0: F = -k*x - c*v, a = F/m (mass = 1).
+  const force = -PHYSICS_STIFFNESS * physicsPosY - PHYSICS_DAMPING * physicsVelY;
+  physicsVelY += force * dt;
+  physicsPosY += physicsVelY * dt;
+
+  const speed = Math.abs(physicsVelY);
+  const squashY = Math.max(PHYSICS_MIN_SQUASH, 1 - speed * PHYSICS_SQUASH_FACTOR);
+  const squashX = Math.min(PHYSICS_MAX_STRETCH, 1 + speed * PHYSICS_SQUASH_FACTOR * 0.6);
+
+  sprite.style.setProperty("--bounce-y", `${physicsPosY.toFixed(2)}px`);
+  sprite.style.setProperty("--squash-x", squashX.toFixed(3));
+  sprite.style.setProperty("--squash-y", squashY.toFixed(3));
+
+  physicsRafId = requestAnimationFrame(physicsTick);
+}
+
+function physicsSetEnabled(enabled) {
+  const wasEnabled = physicsEnabled;
+  physicsEnabled = enabled;
+  if (enabled && !wasEnabled) {
+    physicsLastTs = null;
+    if (physicsRafId == null) physicsRafId = requestAnimationFrame(physicsTick);
+  } else if (!enabled && wasEnabled) {
+    if (physicsRafId != null) {
+      cancelAnimationFrame(physicsRafId);
+      physicsRafId = null;
+    }
+    // Reset to neutral so disabling mid-bounce doesn't freeze the sprite
+    // in an offset/squashed position.
+    physicsPosY = 0;
+    physicsVelY = 0;
+    sprite.style.setProperty("--bounce-y", "0px");
+    sprite.style.setProperty("--squash-x", "1");
+    sprite.style.setProperty("--squash-y", "1");
+  }
+}
+
 function applySettings(settings) {
   idleFrames = (settings.idleFrames || []).map(toAssetUrl);
   talkingFrames = (settings.talkingFrames || []).map(toAssetUrl);
@@ -98,6 +181,9 @@ function applySettings(settings) {
     filters.push("drop-shadow(0 6px 10px rgba(0,0,0,0.55))");
   }
   sprite.style.setProperty("--effect-filter", filters.length ? filters.join(" ") : "none");
+
+  physicsIntensity = cw.physicsIntensity ?? 50;
+  physicsSetEnabled(!!cw.physicsEnabled);
 }
 
 listen("settings-updated", (event) => applySettings(event.payload));
@@ -107,6 +193,23 @@ listen("state-changed", (event) => {
   if (isTalking === currentlyTalking) return; // no actual transition, ignore
   currentlyTalking = isTalking;
   startCycle(isTalking ? talkingFrames : idleFrames);
+
+  // v1.10: "bounce on speech" — a one-time pop when talking STARTS. Talking
+  // -> idle deliberately gets no impulse; letting the spring settle
+  // naturally back to rest reads as "calming down," which feels right.
+  if (isTalking) {
+    physicsImpulse(55);
+  }
+});
+
+// v1.10: continuous voice-intensity-scaled jiggle while talking — small
+// kicks proportional to loudness, so a loud syllable visibly reacts more
+// than a quiet one. Only applies while currently in the Talking state;
+// idle never jiggles from ambient noise.
+listen("volume-level", (event) => {
+  if (!currentlyTalking || !physicsEnabled) return;
+  const level = event.payload.level;
+  physicsImpulse((level / 100) * 7);
 });
 
 // Initial sync in case this window loads after the first broadcast.

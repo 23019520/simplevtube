@@ -12,12 +12,13 @@
 // single "Default" profile on first load — nobody's existing setup breaks
 // or resets just because this version added profiles.
 
-use crate::events::{CharacterWindowState, Emote, SettingsUpdatedEvent};
+use crate::events::{CharacterWindowState, Emote, EmoteWindowState, SettingsUpdatedEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase", default)]
@@ -41,6 +42,8 @@ pub struct Settings {
     pub theme: String,
     /// v1.3: pop-up emotes.
     pub emotes: Vec<Emote>,
+    /// v1.6: where and at what size emotes pop up on screen.
+    pub emote_window: EmoteWindowState,
 }
 
 // FIX: manual Default impl with sensible values (35, "dark", etc.) — NOT
@@ -66,6 +69,7 @@ impl Default for Settings {
             character_window: CharacterWindowState::default(),
             theme: "dark".to_string(),
             emotes: Vec::new(),
+            emote_window: EmoteWindowState::default(),
         }
     }
 }
@@ -85,6 +89,7 @@ impl From<&Settings> for SettingsUpdatedEvent {
             character_window: s.character_window.clone(),
             theme: s.theme.clone(),
             emotes: s.emotes.clone(),
+            emote_window: s.emote_window.clone(),
         }
     }
 }
@@ -132,7 +137,22 @@ fn migrate_legacy_single_frame_fields(store: &mut ProfileStore) {
 pub struct SettingsManager {
     path: PathBuf,
     current: Mutex<ProfileStore>,
+    // v1.9: undo/redo. Each entry is (profile name, that profile's Settings
+    // snapshot BEFORE the change) so undo/redo work correctly even if you
+    // switch profiles in between — undoing always targets the profile the
+    // change actually happened on, switching back to it if needed.
+    undo_stack: Mutex<Vec<(String, Settings)>>,
+    redo_stack: Mutex<Vec<(String, Settings)>>,
+    // Coalescing: without this, dragging a slider (which fires many rapid
+    // updates) would push one undo step per pixel of movement, making undo
+    // useless for that kind of change. Skipping snapshots within a short
+    // window of the last one groups a whole drag/typing burst into a
+    // single undo step instead.
+    last_snapshot_at: Mutex<Option<Instant>>,
 }
+
+const UNDO_STACK_LIMIT: usize = 30;
+const UNDO_COALESCE_WINDOW: Duration = Duration::from_millis(500);
 
 impl SettingsManager {
     /// Loads config.json from the OS app-data directory, or falls back to
@@ -175,6 +195,9 @@ impl SettingsManager {
         let manager = Self {
             path,
             current: Mutex::new(store),
+            undo_stack: Mutex::new(Vec::new()),
+            redo_stack: Mutex::new(Vec::new()),
+            last_snapshot_at: Mutex::new(None),
         };
         manager.persist();
         manager
@@ -190,8 +213,36 @@ impl SettingsManager {
             .unwrap_or_default()
     }
 
+    /// v1.9: records a pre-change snapshot for undo, unless one was already
+    /// recorded within the last UNDO_COALESCE_WINDOW (groups rapid changes
+    /// like a slider drag into a single undo step). Always clears the redo
+    /// stack — making any new change invalidates whatever was undone
+    /// before it, same as every standard undo/redo implementation.
+    fn maybe_push_undo_snapshot(&self) {
+        let mut last = self.last_snapshot_at.lock().unwrap();
+        let should_push = last.map(|t| t.elapsed() >= UNDO_COALESCE_WINDOW).unwrap_or(true);
+        if !should_push {
+            return;
+        }
+        *last = Some(Instant::now());
+        drop(last);
+
+        let store = self.current.lock().unwrap();
+        let active = store.active_profile.clone();
+        if let Some(settings) = store.profiles.get(&active) {
+            let mut undo = self.undo_stack.lock().unwrap();
+            undo.push((active, settings.clone()));
+            if undo.len() > UNDO_STACK_LIMIT {
+                undo.remove(0);
+            }
+        }
+        drop(store);
+        self.redo_stack.lock().unwrap().clear();
+    }
+
     /// Generic mutate-then-persist helper, applied to the active profile.
     pub fn update<F: FnOnce(&mut Settings)>(&self, f: F) -> Settings {
+        self.maybe_push_undo_snapshot();
         {
             let mut store = self.current.lock().unwrap();
             let active = store.active_profile.clone();
@@ -404,6 +455,54 @@ impl SettingsManager {
         }
         drop(store);
         self.persist();
+    }
+
+    // --- v1.9: undo/redo ---
+
+    /// Restores the most recent pre-change snapshot. If the change being
+    /// undone happened on a different profile than the one currently
+    /// active, switches to that profile too — so undo is always
+    /// meaningful, never silently a no-op because you switched profiles
+    /// since making the change.
+    pub fn undo(&self) -> Result<Settings, String> {
+        let (profile_name, snapshot) = {
+            let mut stack = self.undo_stack.lock().unwrap();
+            stack.pop().ok_or("Nothing to undo.".to_string())?
+        };
+
+        let current_for_redo = {
+            let mut store = self.current.lock().unwrap();
+            let current_for_redo = store.profiles.get(&profile_name).cloned().unwrap_or_default();
+            store.profiles.insert(profile_name.clone(), snapshot);
+            store.active_profile = profile_name.clone();
+            current_for_redo
+        };
+
+        self.redo_stack.lock().unwrap().push((profile_name, current_for_redo));
+        *self.last_snapshot_at.lock().unwrap() = Some(Instant::now()); // don't let the next real edit coalesce with this
+        self.persist();
+        Ok(self.get())
+    }
+
+    /// Symmetric opposite of undo(). Same cross-profile-switching behavior.
+    pub fn redo(&self) -> Result<Settings, String> {
+        let (profile_name, snapshot) = {
+            let mut stack = self.redo_stack.lock().unwrap();
+            stack.pop().ok_or("Nothing to redo.".to_string())?
+        };
+
+        let current_for_undo = {
+            let mut store = self.current.lock().unwrap();
+            let current_for_undo = store.profiles.get(&profile_name).cloned().unwrap_or_default();
+            store.profiles.insert(profile_name.clone(), snapshot);
+            store.active_profile = profile_name.clone();
+            current_for_undo
+        };
+
+        self.undo_stack.lock().unwrap().push((profile_name, current_for_undo));
+        *self.last_snapshot_at.lock().unwrap() = Some(Instant::now());
+        self.persist();
+        Ok(self.get())
     }
 
     fn persist(&self) {

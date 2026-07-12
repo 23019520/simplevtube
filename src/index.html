@@ -14,6 +14,9 @@
         <h1 class="panel__title">SimpleVTube</h1>
         <p class="panel__subtitle">Talk. It reacts. That's it.</p>
       </div>
+      <button class="btn-palette-launcher" id="btn-open-palette" type="button" title="Command palette (Ctrl+K)">
+        ⌘K
+      </button>
     </header>
 
     <section class="section" aria-labelledby="profile-heading">
@@ -73,6 +76,7 @@
       </div>
       <input class="slider" type="range" min="0" max="100" value="35" id="sensitivity-slider"
              aria-label="Voice sensitivity threshold" />
+      <canvas class="waveform-canvas" id="waveform-canvas" width="600" height="60" aria-hidden="true"></canvas>
       <div class="vu-meter-wrap">
         <div class="vu-meter" id="vu-meter" aria-hidden="true"></div>
         <div class="vu-peak-marker" id="vu-peak-marker"></div>
@@ -132,6 +136,16 @@
       <label class="toggle"><input type="checkbox" id="flip-horizontal" /><span>Flip horizontally</span></label>
       <label class="toggle"><input type="checkbox" id="shadow-enabled" /><span>Drop shadow</span></label>
       <label class="toggle"><input type="checkbox" id="outline-enabled" /><span>Outline</span></label>
+      <label class="toggle"><input type="checkbox" id="physics-enabled" /><span>Reactive bounce &amp; jiggle (spring physics)</span></label>
+
+      <div class="field" id="physics-intensity-field">
+        <div class="section__label-row">
+          <span class="field__label">Jiggle intensity</span>
+          <span class="section__value" id="physics-intensity-value">50%</span>
+        </div>
+        <input class="slider" type="range" min="0" max="100" value="50" id="physics-intensity-slider"
+               aria-label="Physics jiggle intensity" />
+      </div>
 
       <p class="hint"><kbd>Ctrl</kbd>+<kbd>=</kbd>/<kbd>-</kbd> resizes the character, <kbd>Ctrl</kbd>+arrow keys move it — works anywhere on your PC, even while another app has focus. You can also drag it directly.</p>
     </details>
@@ -141,6 +155,12 @@
       <div id="emotes-list"></div>
       <button class="btn btn--ghost" id="btn-add-emote" type="button">+ New emote</button>
       <p class="hint">Click "Test" on a card to preview it, or assign a number 1-9 for the <kbd>Alt</kbd>+digit hotkey — fires anywhere on your PC, even while another app has focus.</p>
+
+      <label class="toggle" style="margin-top: 10px;">
+        <input type="checkbox" id="emote-reposition-mode" />
+        <span>Position &amp; resize emote popup on screen</span>
+      </label>
+      <p class="hint">While enabled, a box appears on your screen — drag it to move where emotes appear, or drag its edge to resize them. Turn this back off when you're done.</p>
     </details>
 
     <footer class="status" id="status" role="status">
@@ -152,9 +172,10 @@
   <div class="editor-overlay hidden" id="editor-overlay">
     <div class="editor-modal">
       <h2 class="editor-modal__title">Position your frame</h2>
-      <p class="hint">Drag to reposition, scroll or use the slider to zoom. The grid is just a reference — it isn't part of the saved image.</p>
+      <p class="hint">Drag to reposition, scroll or use the slider to zoom. The faint ghost image is your idle/talking counterpart (or the previous frame, for emotes) — use it to keep everything lined up. The grid isn't part of the saved image.</p>
 
       <div class="editor-canvas-wrap" id="editor-canvas-wrap">
+        <canvas id="editor-onion-canvas" width="512" height="512"></canvas>
         <canvas id="editor-base-canvas" width="512" height="512"></canvas>
         <canvas id="editor-grid-canvas" width="512" height="512"></canvas>
       </div>
@@ -167,10 +188,29 @@
                aria-label="Zoom level" />
       </div>
 
+      <label class="toggle" style="margin-top: 4px;">
+        <input type="checkbox" id="editor-onion-toggle" checked />
+        <span>Show reference frame (onion skin)</span>
+      </label>
+
       <div class="editor-modal__actions">
         <button class="btn btn--ghost" id="editor-btn-reset" type="button">Reset</button>
         <button class="btn btn--ghost" id="editor-btn-cancel" type="button">Cancel</button>
         <button class="btn btn--primary" id="editor-btn-confirm" type="button">Use this frame</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="palette-overlay hidden" id="palette-overlay">
+    <div class="palette-modal">
+      <input class="palette-input" id="palette-input" type="text"
+             placeholder="Type a command… (switch profile, fire emote, launch character…)"
+             autocomplete="off" spellcheck="false" />
+      <div class="palette-results" id="palette-results"></div>
+      <div class="palette-hint">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span><kbd>Enter</kbd> run</span>
+        <span><kbd>Esc</kbd> close</span>
       </div>
     </div>
   </div>

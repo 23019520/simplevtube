@@ -197,6 +197,8 @@ fn main() {
             commands::set_rotation,
             commands::set_shadow_enabled,
             commands::set_outline_enabled,
+            commands::set_physics_enabled,
+            commands::set_physics_intensity,
             commands::list_profiles,
             commands::create_profile,
             commands::switch_profile,
@@ -211,6 +213,9 @@ fn main() {
             commands::remove_emote_frame,
             commands::trigger_emote,
             commands::finalize_emote_window,
+            commands::set_emote_reposition_mode,
+            commands::undo_settings,
+            commands::redo_settings,
             commands::get_settings,
         ])
         .run(tauri::generate_context!())
