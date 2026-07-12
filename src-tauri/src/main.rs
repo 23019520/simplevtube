@@ -1,3 +1,9 @@
+// Suppress the Windows console window in release builds.
+// In dev mode (npm run dev / debug_assertions = true), the terminal stays
+// visible so log output and Rust errors are readable. In release builds
+// (npm run build), it's hidden — app behaves like a normal desktop app.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 // main.rs
 //
 // Boot sequence follows Architecture doc Part C.4 exactly:
@@ -121,6 +127,7 @@ fn main() {
                 initial_settings.sensitivity_threshold,
                 initial_settings.noise_gate_threshold,
                 initial_settings.mouth_hold_time_ms,
+                initial_settings.agc_enabled,
             ));
 
             let windows = Arc::new(WindowManager::new(app_handle.clone(), settings.clone()));
@@ -185,6 +192,7 @@ fn main() {
             commands::set_sensitivity,
             commands::set_noise_gate,
             commands::set_hold_time,
+            commands::set_agc_enabled,
             commands::launch_character,
             commands::hide_character,
             commands::set_always_on_top,

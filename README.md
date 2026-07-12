@@ -1,53 +1,67 @@
+<div align="center">
+
 # SimpleVTube
 
-A lightweight PNGTuber desktop app. Talk into your mic, your idle sprite swaps to a talking sprite. Capture the transparent window in OBS or TikTok Live Studio. No webcam, no rigging, no green screen.
+**A lightweight PNGTuber desktop app.** Talk into your mic, your idle sprite swaps to a talking sprite. No webcam, no rigging, no green screen — just a transparent character window you capture straight into OBS or TikTok Live Studio.
 
-This is v1.2, built from the SRS + Architecture design doc (`docs/SimpleVTube_SRS_Architecture.md`) plus Phases 1, 2, and 4 of the v2 roadmap (`docs/v2-roadmap.md`).
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Built with Tauri](https://img.shields.io/badge/Built%20with-Tauri%202-24C8DB)](https://tauri.app)
+[![Rust](https://img.shields.io/badge/Backend-Rust-orange)](https://www.rust-lang.org)
 
-## What's new in v1.10
-- **Spring-physics reactive jiggle** — a real, live physics simulation (not CSS transitions) driving the character's bounce: a damped spring on vertical position, with squash/stretch derived directly from velocity. Talking triggers a "pop" impulse, and continued speech adds small kicks scaled to how loud you're being — quiet syllables barely register, loud ones visibly react more. Toggle it and its intensity in the Advanced section. Runs at zero cost when disabled — the simulation loop only exists while the toggle is on.
+<!-- Add a demo GIF or screenshot here before publishing -->
 
-- **Live audio waveform** — a genuine scrolling amplitude trace above the VU meter (not just a single current-level readout), showing the last ~6 seconds of your mic input.
-- **Undo/Redo** — Ctrl+Z / Ctrl+Shift+Z undoes/redoes any settings change: frame additions, effect toggles, slider adjustments, profile edits. Rapid changes (like dragging a slider) are automatically grouped into a single undo step rather than one per pixel of movement. Also available from the command palette.
+</div>
 
-- **Command palette** — press Ctrl+K (or click the ⌘K button top-right) for instant fuzzy-search access to every action in the app: launch/hide the character, switch profiles, fire any emote by name, toggle any setting, add frames. Type a few letters of what you want (they don't need to be adjacent — "swpro" matches "switch profile") and hit Enter.
+---
 
-- **Onion skinning in the crop editor** — when adding a new frame to a state or emote that already has frames, your most recently added frame now shows through faintly (blurred) beneath the one you're positioning, and the frame before that even fainter and blurrier. Use it to line up eyes, mouths, or any detail that needs to stay put across frames. Doesn't affect the exported image — it's a positioning aid only.
+## Why this exists
 
-- **Configurable emote position & size** — toggle "Position & resize emote popup on screen" in the Emotes section, and a draggable/resizable placeholder box appears where emotes currently pop up. Move and resize it, then turn the toggle back off. Your custom position and size are remembered from then on (previously this was fixed at 500×500, centered).
+Most PNGTuber software either costs money, comes with far more complexity than a simple mic-reactive avatar needs, or both. SimpleVTube is a personal tool, built for one streaming setup, with a hard rule borrowed from the original spec: **every feature has to make streaming easier, not more complicated.**
 
-- **System-wide global hotkeys** — Ctrl+=/Ctrl+-/Ctrl+Arrow (resize/move the character) and Alt+1 through Alt+9 (fire emotes) now work anywhere on your PC, even while a game, OBS, or any other app has focus. Previously these only worked while the Control Window itself was focused.
-- **Honest tradeoff to know about:** these are genuinely global — Ctrl+= and Ctrl+Arrow are common shortcuts in browsers and some other apps (zoom, text navigation). While SimpleVTube is running, it takes over those combos system-wide. There's no per-shortcut disable in this version; if one conflicts with something you use elsewhere, that's the current cost of it working outside the app at all.
+It's been used across multiple live streams (TikTok Live Studio and OBS) and is actively maintained for personal use — public and open to issues or ideas, but scoped intentionally rather than chasing feature parity with larger VTuber apps.
 
-- **Crop/position editor** — every image you add (avatar frames or emote frames) now opens in a built-in editor first: drag to position, scroll or use the slider to zoom, with a grid overlay for alignment reference. Every exported frame is saved at the exact same 512×512 dimensions, guaranteeing perfectly aligned cycling between frames regardless of what size or aspect ratio your original images were.
-- **Click any existing thumbnail to re-crop it** — no need to remove and re-add if you want to nudge the positioning later.
-- Your original image files are never modified — edited frames are saved as new files in the app's own data folder, so cropping is fully non-destructive.
+## Development process
 
-- **Pop-up emotes** — separate from the avatar entirely, shown centered on screen. Add as many emotes as you want, each with its own image frames, duration, and an optional Alt+digit hotkey. Trigger with the "Test" button or the hotkey.
-- **Multi-frame avatar states** — idle and talking can each cycle through multiple images now (e.g. blinking, alternating mouth shapes), not just one static picture each. Add frames the same way as before (Browse or drag-and-drop); a single frame behaves exactly like before.
-- **Draggable character** — click and drag the character directly, or use Ctrl+Arrow keys to nudge it. Both respect "Lock position & size."
-- **Fixed the transparent-frame artifact** — Windows was adding a faint border to the borderless character window; disabled.
+Built through an iterative, spec-first workflow with AI-assisted implementation (Claude, Anthropic) — I wrote the requirements, drove every feature decision, tested each build on real hardware across real streams, and diagnosed issues from actual runtime behavior the AI had no way to observe on its own (OBS capture quirks, microphone gain differences, Windows-specific rendering bugs). The AI wrote code; verifying it actually worked was on me.
 
-- **Noise gate, adjustable mouth hold time, and always-on audio smoothing** — tune out background noise and chatter without editing code
-- **Auto-calibrate** — sets your sensitivity threshold automatically from a few seconds of quiet + a few seconds of normal talking
-- **Peak-hold VU meter** — see your loudest recent moment, not just the current instant
-- **Character opacity, lock, click-through, flip, rotation, drop shadow, outline** — all under the "Advanced" section
-- **Scaling hotkeys** — Ctrl+= / Ctrl+- to resize the character without touching the mouse
-- **Drag-and-drop image loading** — drop a PNG onto the idle/talking row instead of only using Browse
-- **Multiple profiles** — save separate character/mic/effect setups and switch between them with one click. Existing v1/v1.1 configs are migrated automatically into a "Default" profile — nothing is lost.
+I don't think there's anything to hide about that. Knowing how to direct, specify, and rigorously test AI-assisted development is a real skill, and this project — SRS and architecture docs written before a line of code existed, a full changelog of real bugs found and fixed through actual use, not just features bolted on — is as much a demonstration of that skill as of the app itself.
 
-## Prerequisites
+## Features
 
-You'll need these installed once, before first run:
+**Core**
+- Real-time mic-driven idle/talking sprite switching (RMS + decibel-based volume detection)
+- Transparent, borderless, always-on-top character window — captures cleanly in OBS and TikTok Live Studio
+- Multi-frame cycling per state (blinking, alternating mouth shapes) instead of one static image
+- Built-in crop/position editor with onion-skinning, so every frame aligns pixel-perfectly regardless of source image size
 
-1. **Rust** — https://rustup.rs (installs `cargo`)
-2. **Node.js** (LTS) — https://nodejs.org
-3. **Tauri CLI** — installed automatically via the project's `devDependencies`, but you also need the Tauri OS-level prerequisites:
-   - **Windows:** Microsoft C++ Build Tools + WebView2 (usually already present on Win10/11)
-   - **macOS:** Xcode Command Line Tools (`xcode-select --install`)
-   - **Linux:** see https://tauri.app/start/prerequisites/ (webkit2gtk, etc.)
+**Audio**
+- Noise gate, adjustable mouth-hold time, live smoothing
+- One-click auto-calibration from a few seconds of silence + speech
+- Optional Automatic Gain Control for mics with inconsistent loudness
+- Live scrolling waveform + peak-hold VU meter
 
-## First run
+**Character**
+- Drag to reposition, or move/resize with global hotkeys — works even while another app has focus
+- Opacity, lock, click-through, flip, rotation, drop shadow, outline
+- Real spring-physics reactive bounce and idle breathing animation (not CSS transitions)
+- Snaps to screen edges/center when dragged close
+
+**Workflow**
+- Pop-up emotes with per-emote frames, duration, and hotkeys
+- Multiple named profiles, one-click switching
+- Command palette (Ctrl+K) — fuzzy search for every action in the app
+- Undo/redo across every settings change
+- Stream Mode — collapses the UI to essentials while you're live
+
+## Tech stack
+
+- **[Tauri 2](https://tauri.app)** — Rust backend, native webview frontend, chosen specifically over Electron to hit tight RAM/startup targets
+- **Rust** — audio pipeline ([`cpal`](https://github.com/RustAudio/cpal)), settings persistence, window management, global hotkeys
+- **Vanilla HTML/CSS/JS** — no frontend framework or bundler; the whole UI is hand-rolled against Tauri's injected API
+
+## Getting started
+
+**Prerequisites:** [Rust](https://rustup.rs), [Node.js](https://nodejs.org) (LTS), and the [Tauri OS-level prerequisites](https://tauri.app/start/prerequisites/) for your platform.
 
 ```bash
 npm install
@@ -56,28 +70,30 @@ npm run dev
 
 This launches the Control Window. The Character Window stays hidden until you click **Launch character**.
 
-## Getting to a working beta
+**First-run checklist:**
+1. Add idle and talking frames (Browse or drag-and-drop) — each opens in the built-in crop editor.
+2. Select your microphone and click **Auto-calibrate**.
+3. Click **Launch character**.
+4. In OBS/TikTok Live Studio, add a **Window Capture** source targeting "SimpleVTube Character." If OBS shows a black background instead of transparency, switch the capture Method to the Windows 10+ (Windows Graphics Capture) option and enable "Allow Transparency."
 
-1. Click **Browse** next to Idle image → pick a PNG (or drag-and-drop one onto the row).
-2. Click **Browse** next to Talking image → pick a PNG.
-3. Select your microphone from the dropdown.
-4. Click **Auto-calibrate** and follow the prompts, or manually adjust the Sensitivity slider while watching the VU meter.
-5. Click **Launch character**.
-6. In OBS or TikTok Live Studio, add a **Window Capture** source targeting "SimpleVTube Character", enable transparency if the capture method asks for it.
-7. Speak — the sprite should flip from idle to talking within ~100ms and hold briefly through short pauses.
+## Documentation
 
-## What's real vs. what needs tuning
+This project was built spec-first — the original requirements and architecture documents are kept alongside the code, not thrown away after the fact:
 
-This scaffold is a complete, working implementation of every FR in the SRS plus Phases 1/2/4 of the v2 roadmap — but a few things are worth your own hands-on verification once you run it:
+- **[`docs/SimpleVTube_SRS_Architecture.md`](docs/SimpleVTube_SRS_Architecture.md)** — the original Software Requirements Specification and system architecture, including the full directory map and file-to-file communication contracts
+- **[`docs/v2-roadmap.md`](docs/v2-roadmap.md)** — feature backlog, triaged by actual implementation complexity rather than just topic
+- **[`docs/v1.12-final-sprint.md`](docs/v1.12-final-sprint.md)** — the closing sprint plan, including what was deliberately left out and why
+- **[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)** — practical fixes for OBS transparency, mic calibration, and other issues found during real use
+- **[`CHANGELOG.md`](CHANGELOG.md)** — full version history
 
-- **Volume-to-percentage scaling** in `audio_engine.rs` uses a decibel-based formula that should work well across most mics, but auto-calibrate exists specifically because every microphone's gain is different — use it if talking doesn't reliably cross the threshold.
-- **Always-on-top / transparency behavior** can differ subtly across Windows and macOS. If the Character Window shows a black background instead of transparent in OBS, flag it and we'll debug it together against your specific OS/OBS version.
-- **Drag-and-drop** relies on Tauri's native file-drop bridge, which is a slightly less battle-tested path than the Browse-button dialog flow — if a drop doesn't register, Browse still always works as the fallback.
+## Known limitations
 
-## Not yet built
+A few things are intentionally out of scope for now (see the roadmap doc for the full reasoning):
 
-Phase 3 of the v2 roadmap (blinking, breathing, idle bobbing, multi-frame talking, animated GIF/APNG/WebP support) is a genuinely separate animation-engine subsystem and hasn't been started — see `docs/v2-roadmap.md` for the full breakdown. Phase 5 (expression hotkeys, emote wheel) is intentionally not scoped yet.
+- No animated GIF/APNG/sprite-sheet playback — the animation model is discrete frame-cycling, not decoded animated files
+- No OBS WebSocket integration, virtual camera, or NDI/Spout output
+- No Stream Deck/MIDI input, cloud sync, or plugin system
 
-## Project structure
+## License
 
-See `docs/SimpleVTube_SRS_Architecture.md`, Part C, for the full directory map and the exact file-to-file communication contracts this code implements.
+[MIT](LICENSE) — see the file for details.

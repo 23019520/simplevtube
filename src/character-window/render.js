@@ -80,6 +80,17 @@ let physicsVelY = 0;
 let physicsRafId = null;
 let physicsLastTs = null;
 
+// v1.11: idle breathing. Deliberately kept as a simple, separate sine wave
+// rather than folded into the reactive spring above — the spring models
+// impulse response (a "pop" and its ringdown), which is the wrong tool for
+// a continuous, always-present sway. Two independent systems, additively
+// combined at render time, stay easier to reason about and tune than one
+// system trying to do both. Only contributes while NOT talking; the
+// reactive spring takes over fully during speech.
+const IDLE_BREATHE_PERIOD_MS = 3200; // one full up/down cycle
+const IDLE_BREATHE_AMPLITUDE_PX = 4; // max vertical drift at full intensity
+const IDLE_BREATHE_SQUASH_AMPLITUDE = 0.015; // subtle "chest rise" scale pulse
+
 function physicsIntensityScale() {
   return physicsIntensity / 50; // 50 (default) => 1x, i.e. the tuned constants above assume "50"
 }
@@ -104,10 +115,25 @@ function physicsTick(ts) {
   physicsPosY += physicsVelY * dt;
 
   const speed = Math.abs(physicsVelY);
-  const squashY = Math.max(PHYSICS_MIN_SQUASH, 1 - speed * PHYSICS_SQUASH_FACTOR);
-  const squashX = Math.min(PHYSICS_MAX_STRETCH, 1 + speed * PHYSICS_SQUASH_FACTOR * 0.6);
+  let squashY = Math.max(PHYSICS_MIN_SQUASH, 1 - speed * PHYSICS_SQUASH_FACTOR);
+  let squashX = Math.min(PHYSICS_MAX_STRETCH, 1 + speed * PHYSICS_SQUASH_FACTOR * 0.6);
 
-  sprite.style.setProperty("--bounce-y", `${physicsPosY.toFixed(2)}px`);
+  // v1.11: idle breathing — additive, not blended into the spring state
+  // itself, so it can never accumulate or destabilize the reactive spring
+  // (e.g. if talking starts and stops rapidly). Zero contribution while
+  // talking, full sine-wave contribution while idle.
+  let bounceY = physicsPosY;
+  if (!currentlyTalking) {
+    const intensityScale = physicsIntensityScale();
+    const phase = (ts / IDLE_BREATHE_PERIOD_MS) * Math.PI * 2;
+    const breathe = Math.sin(phase);
+    bounceY += breathe * IDLE_BREATHE_AMPLITUDE_PX * intensityScale;
+    const breatheSquash = breathe * IDLE_BREATHE_SQUASH_AMPLITUDE * intensityScale;
+    squashY = Math.max(PHYSICS_MIN_SQUASH, Math.min(PHYSICS_MAX_STRETCH, squashY + breatheSquash));
+    squashX = Math.max(PHYSICS_MIN_SQUASH, Math.min(PHYSICS_MAX_STRETCH, squashX - breatheSquash * 0.5));
+  }
+
+  sprite.style.setProperty("--bounce-y", `${bounceY.toFixed(2)}px`);
   sprite.style.setProperty("--squash-x", squashX.toFixed(3));
   sprite.style.setProperty("--squash-y", squashY.toFixed(3));
 

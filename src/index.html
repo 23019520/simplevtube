@@ -14,12 +14,15 @@
         <h1 class="panel__title">SimpleVTube</h1>
         <p class="panel__subtitle">Talk. It reacts. That's it.</p>
       </div>
+      <button class="btn-palette-launcher" id="btn-stream-mode" type="button" title="Stream Mode — hide advanced sections">
+        👁
+      </button>
       <button class="btn-palette-launcher" id="btn-open-palette" type="button" title="Command palette (Ctrl+K)">
         ⌘K
       </button>
     </header>
 
-    <section class="section" aria-labelledby="profile-heading">
+    <section class="section section--essential" aria-labelledby="profile-heading">
       <h2 id="profile-heading" class="section__label">Profile</h2>
       <div class="profile-row">
         <select class="select" id="profile-select" aria-label="Select character profile"></select>
@@ -83,7 +86,7 @@
       </div>
     </section>
 
-    <section class="section section--actions">
+    <section class="section section--actions section--essential">
       <button class="btn btn--primary" id="btn-launch" type="button">Launch character</button>
       <button class="btn btn--ghost" id="btn-hide" type="button">Hide character</button>
       <label class="toggle">
@@ -113,6 +116,9 @@
                aria-label="Mouth hold time in milliseconds" />
       </div>
 
+      <label class="toggle"><input type="checkbox" id="agc-enabled" /><span>Automatic gain control</span></label>
+      <p class="hint">Dynamically adjusts for quiet or loud microphones so your sensitivity threshold means the same thing either way. Off by default — turn on if talking never reliably crosses your threshold even after auto-calibrating.</p>
+
       <div class="field">
         <div class="section__label-row">
           <span class="field__label">Character opacity</span>
@@ -136,7 +142,7 @@
       <label class="toggle"><input type="checkbox" id="flip-horizontal" /><span>Flip horizontally</span></label>
       <label class="toggle"><input type="checkbox" id="shadow-enabled" /><span>Drop shadow</span></label>
       <label class="toggle"><input type="checkbox" id="outline-enabled" /><span>Outline</span></label>
-      <label class="toggle"><input type="checkbox" id="physics-enabled" /><span>Reactive bounce &amp; jiggle (spring physics)</span></label>
+      <label class="toggle"><input type="checkbox" id="physics-enabled" /><span>Reactive bounce, jiggle &amp; idle breathing (spring physics)</span></label>
 
       <div class="field" id="physics-intensity-field">
         <div class="section__label-row">

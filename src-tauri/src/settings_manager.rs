@@ -27,6 +27,8 @@ pub struct Settings {
     pub sensitivity_threshold: u8,
     pub noise_gate_threshold: u8,
     pub mouth_hold_time_ms: u32,
+    /// v1.12: Automatic Gain Control toggle — see events.rs's field doc.
+    pub agc_enabled: bool,
     /// LEGACY (pre-v1.3): superseded by idle_frames/talking_frames below.
     /// Kept as-is (never changing an existing field's type — see the
     /// migration note on load()) so old configs still parse; migrate()
@@ -61,6 +63,7 @@ impl Default for Settings {
             sensitivity_threshold: 35, // sensible default per FR-003
             noise_gate_threshold: 6,
             mouth_hold_time_ms: 200,
+            agc_enabled: false,
             idle_image_path: None,
             talking_image_path: None,
             idle_frames: Vec::new(),
@@ -81,6 +84,7 @@ impl From<&Settings> for SettingsUpdatedEvent {
             sensitivity_threshold: s.sensitivity_threshold,
             noise_gate_threshold: s.noise_gate_threshold,
             mouth_hold_time_ms: s.mouth_hold_time_ms,
+            agc_enabled: s.agc_enabled,
             idle_image_path: s.idle_image_path.clone(),
             talking_image_path: s.talking_image_path.clone(),
             idle_frames: s.idle_frames.clone(),

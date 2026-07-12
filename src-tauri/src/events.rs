@@ -53,6 +53,10 @@ pub struct SettingsUpdatedEvent {
     pub noise_gate_threshold: u8,
     /// v1.2: was a hardcoded 200ms constant; now user-adjustable.
     pub mouth_hold_time_ms: u32,
+    /// v1.12: Automatic Gain Control — dynamically scales mic volume based
+    /// on a slow-following peak envelope, so quiet and loud mics both land
+    /// in a usable range. Off by default (see audio_engine.rs for why).
+    pub agc_enabled: bool,
     /// LEGACY (pre-v1.3): kept only so old data has somewhere to live.
     /// New code should read idle_frames/talking_frames instead. See
     /// settings_manager.rs's migration step for how these get folded in.

@@ -756,3 +756,23 @@ body.drag-over .frame-group {
 @media (prefers-reduced-motion: reduce) {
   .vu-tile__fill { transition: none; }
 }
+
+/* --- v1.12: Stream Mode --- */
+/* Collapses everything except the essentials (profile, launch/hide,
+   status) — CSS class toggle only, nothing is destroyed, so every setting
+   is still reachable via the command palette while in this mode. */
+
+body.stream-mode .section:not(.section--essential),
+body.stream-mode .section--advanced,
+body.stream-mode .panel__subtitle {
+  display: none;
+}
+
+body.stream-mode .panel {
+  padding-bottom: 12px;
+}
+
+#btn-stream-mode.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}

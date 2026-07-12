@@ -45,6 +45,29 @@ fn broadcast_profiles(app: &AppHandle, settings: &SettingsManager) {
     let _ = app.emit(EVT_PROFILES_UPDATED, ProfilesUpdatedEvent { profiles, active_profile });
 }
 
+/// v1.12 FIX: the crop editor saves every exported frame as a new file
+/// under app-data/frames/ (see save_processed_frame) — nothing ever
+/// deleted the OLD file when a frame was replaced or removed, so repeated
+/// editing silently accumulated orphaned files forever. This checks that a
+/// given path is genuinely inside our own managed frames/ folder (never
+/// touches the user's original source images, wherever they live) before
+/// deleting it. Best-effort: a failed delete is not surfaced as an error
+/// to the user, since the settings mutation itself already succeeded and
+/// a stray leftover file is a minor cleanup miss, not a functional bug.
+fn cleanup_managed_frame_file(app: &AppHandle, path: &str) {
+    let Ok(app_data_dir) = app.path().app_data_dir() else {
+        return;
+    };
+    let frames_dir = app_data_dir.join("frames");
+    let (Ok(canon_path), Ok(canon_frames_dir)) = (std::fs::canonicalize(path), std::fs::canonicalize(&frames_dir))
+    else {
+        return; // path doesn't exist or frames dir doesn't exist yet — nothing to clean up
+    };
+    if canon_path.starts_with(&canon_frames_dir) {
+        let _ = std::fs::remove_file(&canon_path);
+    }
+}
+
 /// Called once from main.rs's setup() to fire the initial settings-updated
 /// and profiles-updated events (boot sequence step 2->3 in Architecture C.4).
 pub fn broadcast_initial_settings(app: &AppHandle, settings: &SettingsManager) {
@@ -166,28 +189,46 @@ pub fn append_talking_frame(app: AppHandle, state: State<'_, AppState>, path: St
 
 /// v1.4: replaces a frame in place at a given index — used when re-editing
 /// an existing thumbnail's crop/position rather than adding a new one.
+/// v1.12: also deletes the OLD frame file from disk (if it's one of ours).
 #[tauri::command]
 pub fn replace_idle_frame(app: AppHandle, state: State<'_, AppState>, index: usize, path: String) {
+    let old_path = state.settings.get().idle_frames.get(index).cloned();
     state.settings.replace_idle_frame(index, path);
+    if let Some(old_path) = old_path {
+        cleanup_managed_frame_file(&app, &old_path);
+    }
     broadcast_settings(&app, &state.settings);
 }
 
 #[tauri::command]
 pub fn replace_talking_frame(app: AppHandle, state: State<'_, AppState>, index: usize, path: String) {
+    let old_path = state.settings.get().talking_frames.get(index).cloned();
     state.settings.replace_talking_frame(index, path);
+    if let Some(old_path) = old_path {
+        cleanup_managed_frame_file(&app, &old_path);
+    }
     broadcast_settings(&app, &state.settings);
 }
 
 /// v1.3: removes one frame from the idle/talking frame list by index.
+/// v1.12: also deletes the removed frame's file from disk (if it's one of ours).
 #[tauri::command]
 pub fn remove_idle_frame(app: AppHandle, state: State<'_, AppState>, index: usize) {
+    let old_path = state.settings.get().idle_frames.get(index).cloned();
     state.settings.remove_idle_frame(index);
+    if let Some(old_path) = old_path {
+        cleanup_managed_frame_file(&app, &old_path);
+    }
     broadcast_settings(&app, &state.settings);
 }
 
 #[tauri::command]
 pub fn remove_talking_frame(app: AppHandle, state: State<'_, AppState>, index: usize) {
+    let old_path = state.settings.get().talking_frames.get(index).cloned();
     state.settings.remove_talking_frame(index);
+    if let Some(old_path) = old_path {
+        cleanup_managed_frame_file(&app, &old_path);
+    }
     broadcast_settings(&app, &state.settings);
 }
 
@@ -237,6 +278,15 @@ pub fn set_noise_gate(app: AppHandle, state: State<'_, AppState>, value: u8) {
 pub fn set_hold_time(app: AppHandle, state: State<'_, AppState>, value: u32) {
     state.audio.set_hold_time_ms(value);
     state.settings.update(|s| s.mouth_hold_time_ms = value);
+    broadcast_settings(&app, &state.settings);
+}
+
+/// v1.12: Automatic Gain Control toggle — see audio_engine.rs for the
+/// actual peak-follower implementation.
+#[tauri::command]
+pub fn set_agc_enabled(app: AppHandle, state: State<'_, AppState>, value: bool) {
+    state.audio.set_agc_enabled(value);
+    state.settings.update(|s| s.agc_enabled = value);
     broadcast_settings(&app, &state.settings);
 }
 
@@ -398,6 +448,7 @@ fn apply_active_profile_audio(state: &State<'_, AppState>) {
     state.audio.set_threshold(settings.sensitivity_threshold);
     state.audio.set_noise_gate(settings.noise_gate_threshold);
     state.audio.set_hold_time_ms(settings.mouth_hold_time_ms);
+    state.audio.set_agc_enabled(settings.agc_enabled);
 }
 
 // --- v1.3: pop-up emotes ---
@@ -412,9 +463,14 @@ pub fn add_emote(app: AppHandle, state: State<'_, AppState>) -> Emote {
     emote
 }
 
+/// v1.12: also deletes ALL of the emote's frame files from disk (if ours).
 #[tauri::command]
 pub fn delete_emote(app: AppHandle, state: State<'_, AppState>, id: String) {
+    let old_frames = state.settings.find_emote(&id).map(|e| e.frame_paths).unwrap_or_default();
     state.settings.delete_emote(&id);
+    for path in old_frames {
+        cleanup_managed_frame_file(&app, &path);
+    }
     broadcast_settings(&app, &state.settings);
 }
 
@@ -452,15 +508,30 @@ pub fn append_emote_frame(app: AppHandle, state: State<'_, AppState>, id: String
 }
 
 /// v1.4: replaces an emote frame in place (re-editing an existing thumbnail).
+/// v1.12: also deletes the OLD frame file from disk (if it's one of ours).
 #[tauri::command]
 pub fn replace_emote_frame(app: AppHandle, state: State<'_, AppState>, id: String, index: usize, path: String) {
+    let old_path = state
+        .settings
+        .find_emote(&id)
+        .and_then(|e| e.frame_paths.get(index).cloned());
     state.settings.replace_emote_frame(&id, index, path);
+    if let Some(old_path) = old_path {
+        cleanup_managed_frame_file(&app, &old_path);
+    }
     broadcast_settings(&app, &state.settings);
 }
 
 #[tauri::command]
 pub fn remove_emote_frame(app: AppHandle, state: State<'_, AppState>, id: String, index: usize) {
+    let old_path = state
+        .settings
+        .find_emote(&id)
+        .and_then(|e| e.frame_paths.get(index).cloned());
     state.settings.remove_emote_frame(&id, index);
+    if let Some(old_path) = old_path {
+        cleanup_managed_frame_file(&app, &old_path);
+    }
     broadcast_settings(&app, &state.settings);
 }
 

@@ -22,11 +22,21 @@
 //     cosmetically in the frontend meter), reducing chatter from a raw,
 //     jittery per-buffer RMS reading.
 
+// v1.12 addition:
+//   - Automatic Gain Control (AGC): a slow-following peak envelope tracks
+//     how loud this mic TENDS to get, and a dynamic gain multiplier scales
+//     the signal so that peak lands near a fixed target — meaning a quiet
+//     mic and a loud mic both end up in a similar 0-100 range, and your
+//     sensitivity threshold means roughly the same thing regardless of
+//     which mic you're using. Off by default: it changes detection
+//     behavior, and anyone who already tuned their threshold manually
+//     shouldn't have that silently shift under them on an update.
+
 use crate::events::{DeviceErrorEvent, DeviceErrorReason, StateChangedEvent, VoiceState, VolumeLevelEvent};
 use crate::events::{EVT_DEVICE_ERROR, EVT_STATE_CHANGED, EVT_VOLUME_LEVEL};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Stream, StreamConfig};
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -37,6 +47,17 @@ use tauri::{AppHandle, Emitter};
 /// far more often than any UI needs to redraw (every few ms); throttling
 /// to ~20Hz keeps the meter smooth without flooding the event bus.
 const VOLUME_EMIT_INTERVAL_MS: u128 = 50;
+
+// AGC tuning: target peak of 65 (not 100) leaves headroom so a sudden
+// louder-than-usual moment doesn't immediately clip at the ceiling.
+// Attack is fast (envelope quickly captures "this mic can get this loud"),
+// release is DELIBERATELY very slow (envelope shouldn't collapse just
+// because you paused for a breath) — standard peak-follower behavior.
+const AGC_TARGET_PEAK: f32 = 65.0;
+const AGC_MIN_GAIN: f32 = 0.5;
+const AGC_MAX_GAIN: f32 = 4.0;
+const AGC_ATTACK: f32 = 0.08;
+const AGC_RELEASE: f32 = 0.0008;
 
 enum AudioCommand {
     Start(Option<String>),
@@ -50,27 +71,44 @@ pub struct AudioEngine {
     threshold: Arc<AtomicU8>,
     noise_gate: Arc<AtomicU8>,
     hold_time_ms: Arc<AtomicU32>,
+    agc_enabled: Arc<AtomicBool>,
     command_tx: Sender<AudioCommand>,
 }
 
 impl AudioEngine {
-    pub fn new(app: AppHandle, initial_threshold: u8, initial_noise_gate: u8, initial_hold_time_ms: u32) -> Self {
+    pub fn new(
+        app: AppHandle,
+        initial_threshold: u8,
+        initial_noise_gate: u8,
+        initial_hold_time_ms: u32,
+        initial_agc_enabled: bool,
+    ) -> Self {
         let threshold = Arc::new(AtomicU8::new(initial_threshold));
         let noise_gate = Arc::new(AtomicU8::new(initial_noise_gate));
         let hold_time_ms = Arc::new(AtomicU32::new(initial_hold_time_ms));
+        let agc_enabled = Arc::new(AtomicBool::new(initial_agc_enabled));
         let (command_tx, command_rx) = mpsc::channel::<AudioCommand>();
 
         let thread_threshold = threshold.clone();
         let thread_noise_gate = noise_gate.clone();
         let thread_hold_time_ms = hold_time_ms.clone();
+        let thread_agc_enabled = agc_enabled.clone();
         thread::spawn(move || {
-            audio_control_loop(command_rx, thread_threshold, thread_noise_gate, thread_hold_time_ms, app);
+            audio_control_loop(
+                command_rx,
+                thread_threshold,
+                thread_noise_gate,
+                thread_hold_time_ms,
+                thread_agc_enabled,
+                app,
+            );
         });
 
         Self {
             threshold,
             noise_gate,
             hold_time_ms,
+            agc_enabled,
             command_tx,
         }
     }
@@ -101,6 +139,10 @@ impl AudioEngine {
         self.hold_time_ms.store(value, Ordering::Relaxed);
     }
 
+    pub fn set_agc_enabled(&self, value: bool) {
+        self.agc_enabled.store(value, Ordering::Relaxed);
+    }
+
     pub fn start(&self, device_id: Option<String>) {
         let _ = self.command_tx.send(AudioCommand::Start(device_id));
     }
@@ -118,6 +160,7 @@ fn audio_control_loop(
     threshold: Arc<AtomicU8>,
     noise_gate: Arc<AtomicU8>,
     hold_time_ms: Arc<AtomicU32>,
+    agc_enabled: Arc<AtomicBool>,
     app: AppHandle,
 ) {
     let mut _current_stream: Option<Stream> = None;
@@ -127,7 +170,14 @@ fn audio_control_loop(
             AudioCommand::Start(device_id) => {
                 // Drop any existing stream first (stops the old mic cleanly).
                 _current_stream = None;
-                _current_stream = build_and_play_stream(&app, &threshold, &noise_gate, &hold_time_ms, device_id);
+                _current_stream = build_and_play_stream(
+                    &app,
+                    &threshold,
+                    &noise_gate,
+                    &hold_time_ms,
+                    &agc_enabled,
+                    device_id,
+                );
             }
             AudioCommand::Stop => {
                 _current_stream = None; // dropping a cpal Stream stops it
@@ -145,6 +195,7 @@ fn build_and_play_stream(
     threshold: &Arc<AtomicU8>,
     noise_gate: &Arc<AtomicU8>,
     hold_time_ms: &Arc<AtomicU32>,
+    agc_enabled: &Arc<AtomicBool>,
     device_id: Option<String>,
 ) -> Option<Stream> {
     let host = cpal::default_host();
@@ -187,6 +238,7 @@ fn build_and_play_stream(
     let threshold = threshold.clone();
     let noise_gate = noise_gate.clone();
     let hold_time_ms = hold_time_ms.clone();
+    let agc_enabled = agc_enabled.clone();
     let app_handle = app.clone();
     let err_app_handle = app.clone();
 
@@ -197,6 +249,7 @@ fn build_and_play_stream(
     let mut last_flip = Instant::now();
     let mut last_volume_emit = Instant::now();
     let mut smoothed_level: f32 = 0.0;
+    let mut agc_peak_envelope: f32 = AGC_TARGET_PEAK; // start assuming "typical" loudness, not silence
 
     let stream_result = device.build_input_stream(
         &config,
@@ -210,6 +263,22 @@ fn build_and_play_stream(
             // instead of barely registering with a naive linear multiply.
             let db = 20.0 * rms.max(1e-6).log10(); // roughly -120..0 dB
             let mut volume_pct = (((db + 60.0) / 60.0) * 100.0).clamp(0.0, 100.0);
+
+            // v1.12: Automatic Gain Control. Runs BEFORE the noise gate and
+            // smoothing so both of those operate on the already-normalized
+            // signal — meaning your noise gate/threshold settings mean
+            // roughly the same thing whether AGC is on or off, just scaled
+            // to fit a quieter or louder mic automatically.
+            if agc_enabled.load(Ordering::Relaxed) {
+                let envelope_rate = if volume_pct > agc_peak_envelope {
+                    AGC_ATTACK
+                } else {
+                    AGC_RELEASE
+                };
+                agc_peak_envelope += (volume_pct - agc_peak_envelope) * envelope_rate;
+                let gain = (AGC_TARGET_PEAK / agc_peak_envelope.max(5.0)).clamp(AGC_MIN_GAIN, AGC_MAX_GAIN);
+                volume_pct = (volume_pct * gain).clamp(0.0, 100.0);
+            }
 
             // Noise gate: treat anything below the floor as silence. This
             // runs BEFORE smoothing so a constant low hum can't slowly drag

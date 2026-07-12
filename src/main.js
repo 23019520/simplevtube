@@ -36,6 +36,7 @@ const el = {
   noiseGateValue: document.getElementById("noise-gate-value"),
   holdTimeSlider: document.getElementById("hold-time-slider"),
   holdTimeValue: document.getElementById("hold-time-value"),
+  agcEnabled: document.getElementById("agc-enabled"),
   opacitySlider: document.getElementById("opacity-slider"),
   opacityValue: document.getElementById("opacity-value"),
   rotationSlider: document.getElementById("rotation-slider"),
@@ -60,6 +61,7 @@ const el = {
   editorBtnReset: document.getElementById("editor-btn-reset"),
   editorBtnCancel: document.getElementById("editor-btn-cancel"),
   editorBtnConfirm: document.getElementById("editor-btn-confirm"),
+  btnStreamMode: document.getElementById("btn-stream-mode"),
   btnOpenPalette: document.getElementById("btn-open-palette"),
   paletteOverlay: document.getElementById("palette-overlay"),
   paletteInput: document.getElementById("palette-input"),
@@ -521,6 +523,8 @@ function applySettingsToUI(settings) {
   el.holdTimeSlider.value = settings.mouthHoldTimeMs;
   el.holdTimeValue.textContent = `${settings.mouthHoldTimeMs}ms`;
 
+  el.agcEnabled.checked = !!settings.agcEnabled;
+
   const opacityPct = Math.round(settings.characterWindow.opacity * 100);
   el.opacitySlider.value = opacityPct;
   el.opacityValue.textContent = `${opacityPct}%`;
@@ -800,6 +804,26 @@ el.holdTimeSlider.addEventListener("input", async () => {
   el.holdTimeValue.textContent = `${value}ms`;
   await invoke("set_hold_time", { value });
 });
+
+el.agcEnabled.addEventListener("change", async () => {
+  await invoke("set_agc_enabled", { value: el.agcEnabled.checked });
+});
+
+// --- v1.12: Stream Mode ---
+// Session-only UI state (not persisted to settings — it's a workspace
+// preference, not a character/profile setting, and adding a settings
+// field for something this trivial isn't worth the migration surface).
+// Collapses non-essential sections via a single CSS class; every setting
+// remains reachable through the command palette while active.
+let streamModeActive = false;
+
+function setStreamMode(active) {
+  streamModeActive = active;
+  document.body.classList.toggle("stream-mode", active);
+  el.btnStreamMode.classList.toggle("active", active);
+}
+
+el.btnStreamMode.addEventListener("click", () => setStreamMode(!streamModeActive));
 
 el.opacitySlider.addEventListener("input", async () => {
   const pct = Number(el.opacitySlider.value);
@@ -1142,6 +1166,21 @@ function getPaletteActions() {
         el.physicsEnabled.checked = !el.physicsEnabled.checked;
         el.physicsEnabled.dispatchEvent(new Event("change"));
       },
+    },
+    {
+      label: "Toggle automatic gain control",
+      category: "Audio",
+      icon: "📶",
+      run: () => {
+        el.agcEnabled.checked = !el.agcEnabled.checked;
+        el.agcEnabled.dispatchEvent(new Event("change"));
+      },
+    },
+    {
+      label: "Toggle Stream Mode",
+      category: "Workspace",
+      icon: "👁",
+      run: () => setStreamMode(!streamModeActive),
     },
     {
       label: "Undo",

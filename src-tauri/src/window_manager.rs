@@ -13,6 +13,54 @@ use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewWindow};
 pub const CHARACTER_WINDOW_LABEL: &str = "character";
 pub const EMOTE_WINDOW_LABEL: &str = "emote";
 
+/// v1.12: how close (in logical pixels) the window needs to get to an edge
+/// or the center line before it snaps to it.
+const SNAP_THRESHOLD: f64 = 18.0;
+
+/// Given a window's current logical position/size, returns a possibly-
+/// adjusted position that snaps to the current monitor's edges or center
+/// when within SNAP_THRESHOLD. Returns the input unchanged if no snap
+/// applies, or if the monitor can't be determined (never errors out loud —
+/// worst case, snapping silently doesn't happen and dragging still works
+/// exactly as it always has).
+fn compute_snap_position(win: &WebviewWindow, x: f64, y: f64, width: f64, height: f64) -> (f64, f64) {
+    let Ok(Some(monitor)) = win.current_monitor() else {
+        return (x, y);
+    };
+    let scale = monitor.scale_factor();
+    let mpos = monitor.position();
+    let msize = monitor.size();
+    let mon_left = mpos.x as f64 / scale;
+    let mon_top = mpos.y as f64 / scale;
+    let mon_width = msize.width as f64 / scale;
+    let mon_height = msize.height as f64 / scale;
+    let mon_right = mon_left + mon_width;
+    let mon_bottom = mon_top + mon_height;
+    let mon_center_x = mon_left + mon_width / 2.0;
+    let mon_center_y = mon_top + mon_height / 2.0;
+
+    let mut snapped_x = x;
+    let mut snapped_y = y;
+
+    if (x - mon_left).abs() < SNAP_THRESHOLD {
+        snapped_x = mon_left;
+    } else if ((x + width) - mon_right).abs() < SNAP_THRESHOLD {
+        snapped_x = mon_right - width;
+    } else if ((x + width / 2.0) - mon_center_x).abs() < SNAP_THRESHOLD {
+        snapped_x = mon_center_x - width / 2.0;
+    }
+
+    if (y - mon_top).abs() < SNAP_THRESHOLD {
+        snapped_y = mon_top;
+    } else if ((y + height) - mon_bottom).abs() < SNAP_THRESHOLD {
+        snapped_y = mon_bottom - height;
+    } else if ((y + height / 2.0) - mon_center_y).abs() < SNAP_THRESHOLD {
+        snapped_y = mon_center_y - height / 2.0;
+    }
+
+    (snapped_x, snapped_y)
+}
+
 pub struct WindowManager {
     app: AppHandle,
     settings: Arc<SettingsManager>,
@@ -82,6 +130,15 @@ impl WindowManager {
                 tauri::WindowEvent::Moved(pos) => {
                     let scale = win_for_closure.scale_factor().unwrap_or(1.0);
                     let logical = pos.to_logical::<f64>(scale);
+                    let current = settings.get().emote_window;
+
+                    let (snapped_x, snapped_y) =
+                        compute_snap_position(&win_for_closure, logical.x, logical.y, current.width, current.height);
+                    if (snapped_x - logical.x).abs() > 0.5 || (snapped_y - logical.y).abs() > 0.5 {
+                        let _ = win_for_closure.set_position(LogicalPosition::new(snapped_x, snapped_y));
+                        return;
+                    }
+
                     settings.update(|s| {
                         s.emote_window.x = Some(logical.x);
                         s.emote_window.y = Some(logical.y);
@@ -154,6 +211,21 @@ impl WindowManager {
                 tauri::WindowEvent::Moved(pos) => {
                     let scale = win_for_closure.scale_factor().unwrap_or(1.0);
                     let logical = pos.to_logical::<f64>(scale);
+                    let current = settings.get().character_window;
+
+                    // v1.12: snap to screen edges/center when close. If
+                    // snapping actually changes the position, move the
+                    // window there and stop — the resulting follow-up
+                    // Moved event (now already at the snapped spot) is
+                    // what actually gets persisted below, avoiding writing
+                    // a stale pre-snap position to disk.
+                    let (snapped_x, snapped_y) =
+                        compute_snap_position(&win_for_closure, logical.x, logical.y, current.width, current.height);
+                    if (snapped_x - logical.x).abs() > 0.5 || (snapped_y - logical.y).abs() > 0.5 {
+                        let _ = win_for_closure.set_position(LogicalPosition::new(snapped_x, snapped_y));
+                        return;
+                    }
+
                     settings.update(|s| {
                         s.character_window.x = logical.x;
                         s.character_window.y = logical.y;
