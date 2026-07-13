@@ -666,8 +666,8 @@
     </div>
     <div class="dl-panel reveal">
       <div class="dl-top">
-        <div class="dl-version">Latest version<br><b>v1.0.3</b> · released July 2, 2026</div>
-        <div class="dl-notes">Fixes an idle-detection stutter on multi-monitor setups and improves microphone hot-swap handling. <a href="#" style="color:var(--coral);">Full release notes →</a></div>
+        <div class="dl-version">Latest version<br><b>v0.1.0</b></div>
+        <div class="dl-notes">Windows installer, built directly from source.</div>
       </div>
       <div class="dl-tabs">
         <div class="dl-tab active" data-tab="win">Windows</div>
@@ -675,10 +675,8 @@
         <div class="dl-tab" data-tab="lin">Linux</div>
       </div>
       <div class="dl-body" id="dlBody">
-        <div class="dl-row"><span class="dl-row-name">SimpleVTube-1.0.3-Setup.exe <span class="dl-row-size">Installer · 48 MB</span></span><a href="#" class="btn btn-primary btn-sm">Download</a></div>
-        <div class="dl-row"><span class="dl-row-name">SimpleVTube-1.0.3-win-portable.zip <span class="dl-row-size">Portable · 52 MB</span></span><a href="#" class="btn btn-ghost btn-sm">Download</a></div>
+        <div class="dl-row"><span class="dl-row-name">SimpleVTube_0.1.0_x64-setup.exe <span class="dl-row-size">Installer</span></span><a href="SimpleVTube_0.1.0_x64-setup.exe" class="btn btn-primary btn-sm">Download</a></div>
       </div>
-      <div class="dl-checksum">SHA256  8f2a1c…e40b91  (SimpleVTube-1.0.3-Setup.exe) — verify against the checksums file on the GitHub release page.</div>
     </div>
   </div>
 </section>
@@ -896,24 +894,30 @@ document.getElementById('faqList').innerHTML = faqs.map((f,i)=>`
 // ---------- download tabs ----------
 const dlData = {
   win: [
-    ['SimpleVTube-1.0.3-Setup.exe','Installer · 48 MB', true],
-    ['SimpleVTube-1.0.3-win-portable.zip','Portable · 52 MB', false]
+    { name:'SimpleVTube_0.1.0_x64-setup.exe', label:'Installer', href:'SimpleVTube_0.1.0_x64-setup.exe', primary:true }
   ],
   mac: [
-    ['SimpleVTube-1.0.3.dmg','Coming soon · —', false]
+    { name:'macOS build', label:'Coming soon', href:null, primary:false }
   ],
   lin: [
-    ['SimpleVTube-1.0.3.AppImage','Coming soon · —', false]
+    { name:'Linux build', label:'Coming soon', href:null, primary:false }
   ]
 };
+function renderDlRows(tabKey){
+  const rows = dlData[tabKey];
+  document.getElementById('dlBody').innerHTML = rows.map(r => `
+      <div class="dl-row"><span class="dl-row-name">${r.name} <span class="dl-row-size">${r.label}</span></span>
+      ${r.href
+        ? `<a href="${r.href}" class="btn ${r.primary ? 'btn-primary':'btn-ghost'} btn-sm">Download</a>`
+        : `<span class="btn btn-ghost btn-sm" style="opacity:.5;pointer-events:none;">Download</span>`}
+      </div>`).join('');
+}
+renderDlRows('win');
 document.querySelectorAll('.dl-tab').forEach(tab=>{
   tab.addEventListener('click', ()=>{
     document.querySelectorAll('.dl-tab').forEach(t=>t.classList.remove('active'));
     tab.classList.add('active');
-    const rows = dlData[tab.dataset.tab];
-    document.getElementById('dlBody').innerHTML = rows.map(r=>`
-      <div class="dl-row"><span class="dl-row-name">${r[0]} <span class="dl-row-size">${r[1]}</span></span>
-      <a href="#" class="btn ${r[2] ? 'btn-primary':'btn-ghost'} btn-sm">Download</a></div>`).join('');
+    renderDlRows(tab.dataset.tab);
   });
 });
 </script>
