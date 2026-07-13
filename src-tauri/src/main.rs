@@ -228,4 +228,113 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running SimpleVTube");
+}            let settings = Arc::new(SettingsManager::load(app_data_dir));
+
+            let initial_settings = settings.get();
+            let audio = Arc::new(AudioEngine::new(
+                app_handle.clone(),
+                initial_settings.sensitivity_threshold,
+                initial_settings.noise_gate_threshold,
+                initial_settings.mouth_hold_time_ms,
+                initial_settings.agc_enabled,
+            ));
+
+            let windows = Arc::new(WindowManager::new(app_handle.clone(), settings.clone()));
+
+            // FIX: register state as early as physically possible — right
+            // after constructing settings/audio/windows, before any of the
+            // slower work below. Tauri's webviews start loading (and can
+            // start calling invoke()) concurrently with this setup()
+            // closure, not after it — so every command needs AppState to
+            // exist as soon as it's ready, not after validation/geometry
+            // work that has no reason to block it. This closes the
+            // "state not managed" race that showed up once
+            // validate_image_paths() had enough files to check that it
+            // measurably widened the window.
+            app.manage(AppState {
+                settings: settings.clone(),
+                audio: audio.clone(),
+                windows: windows.clone(),
+            });
+
+            // Everything below can safely happen after state is managed.
+            audio.start(initial_settings.microphone_device_id.clone());
+            settings.validate_image_paths(); // FR-006.3: drop stale image paths
+            windows.restore_geometry();
+            windows.setup_emote_window();
+
+            // Register the actual system-wide hotkeys. Failures here are
+            // non-fatal (e.g. another app may have already grabbed one of
+            // these combos) — the app should still run fine either way,
+            // just without that one shortcut firing globally.
+            let gs = app.global_shortcut();
+            let _ = gs.register(resize_grow);
+            let _ = gs.register(resize_shrink);
+            let _ = gs.register(move_up);
+            let _ = gs.register(move_down);
+            let _ = gs.register(move_left);
+            let _ = gs.register(move_right);
+            for (_, sc) in emote_shortcuts {
+                let _ = gs.register(sc);
+            }
+
+            // Broadcast initial settings snapshot so the Control Window can
+            // populate itself as soon as it finishes loading (Step 3).
+            commands::broadcast_initial_settings(&app_handle, &settings);
+
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::pick_image_file,
+            commands::validate_image_path,
+            commands::read_image_as_data_url,
+            commands::save_processed_frame,
+            commands::append_idle_frame,
+            commands::append_talking_frame,
+            commands::replace_idle_frame,
+            commands::replace_talking_frame,
+            commands::remove_idle_frame,
+            commands::remove_talking_frame,
+            commands::set_frame_interval,
+            commands::list_microphones,
+            commands::set_microphone,
+            commands::set_sensitivity,
+            commands::set_noise_gate,
+            commands::set_hold_time,
+            commands::set_agc_enabled,
+            commands::launch_character,
+            commands::hide_character,
+            commands::set_always_on_top,
+            commands::set_character_opacity,
+            commands::set_locked,
+            commands::set_click_through,
+            commands::set_flipped,
+            commands::nudge_character_size,
+            commands::nudge_character_position,
+            commands::set_rotation,
+            commands::set_shadow_enabled,
+            commands::set_outline_enabled,
+            commands::set_physics_enabled,
+            commands::set_physics_intensity,
+            commands::list_profiles,
+            commands::create_profile,
+            commands::switch_profile,
+            commands::delete_profile,
+            commands::add_emote,
+            commands::delete_emote,
+            commands::rename_emote,
+            commands::set_emote_duration,
+            commands::set_emote_hotkey,
+            commands::append_emote_frame,
+            commands::replace_emote_frame,
+            commands::remove_emote_frame,
+            commands::trigger_emote,
+            commands::finalize_emote_window,
+            commands::set_emote_reposition_mode,
+            commands::undo_settings,
+            commands::redo_settings,
+            commands::get_settings,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running SimpleVTube");
 }
